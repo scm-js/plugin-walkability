@@ -1,7 +1,7 @@
 {
   "name": "Walkability",
   "id": "walkability",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Reads the ground the way a unit does: islands, unreachable pockets, the areas a map divides into and the chokes between them with their widths, cliff seams with no ramp, and the ground distance between every pair of start locations, drawn over the map.",
   "author": "Jeany",
   "homepage": "https://github.com/scm-js/plugin-walkability",

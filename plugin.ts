@@ -7,18 +7,20 @@
  * a map divides into and the chokes between them with their widths, pockets no start
  * location can reach, cliff seams a unit can walk over without a ramp, and the ground
  * distance and narrowest passage between every pair of start locations. The result is
- * drawn over the map by a map tool (`api.ui.mapTool`'s `draw`) and listed in a panel
- * that floats beside it; hovering the map reads out the cell under the pointer and a
- * click picks the area or island there.
+ * an overlay (`api.ui.overlay`): a picture over the map that the user switches on and
+ * off from the View menu, the Layers panel, `Ctrl+Shift+W` or the panel, and that stays
+ * up while they place units and doodads on it — an overlay never takes the pointer —
+ * following every edit. Hovering the map reads out the cell under the pointer; the
+ * panel holds the settings and the problems, and a second panel the full lists.
  *
  * `analysis.ts` is the pure part — the grid, the clearance transform, the components,
  * the watershed segmentation, the seams and the start-to-start routes — with its own
  * tests. This file is the editor side: building the grid from the open map, the
- * overlay bitmap per view mode, the panel and the tool. It reads the map and never
+ * overlay bitmap per view mode, the overlay and the panels. It reads the map and never
  * writes to it. `plugin-api/` is the editor's emitted type declarations, vendored so
  * the repository type-checks alone; the host erases the type-only import.
  */
-import type { MapPointer, MapToolHandle, MapView, PanelHandle, PluginApi } from "./plugin-api/plugins/api";
+import type { MapPointer, MapView, OverlayHandle, PanelHandle, PluginApi } from "./plugin-api/plugins/api";
 import {
   analyse, blockBoxes, CELL_PX, CELLS_PER_TILE, Cell, componentsAround, gridFromTiles, pxTiles, report, tiles,
   type Analysis, type PixelBox, type StartInput,
@@ -46,7 +48,8 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, 
 
 const STYLE = `
 .wlk { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
-.wlk .wlk-top { display: flex; gap: 6px; align-items: center; }
+.wlk .wlk-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wlk .wlk-top > label { margin-right: 2px; }
 .wlk .wlk-status { color: var(--text-dim, #99a2b3); line-height: 1.35; }
 .wlk .wlk-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; min-height: 22px; }
 .wlk .wlk-row > label { color: var(--text-dim, #99a2b3); }
@@ -174,8 +177,12 @@ interface Stranded {
 class Session {
   settings: Settings;
   panel: PanelHandle | null = null;
-  tool: MapToolHandle | null = null;
+  details: PanelHandle | null = null;
+  /** The overlay, registered at activation; visibility lives in the editor. */
+  view: OverlayHandle | null = null;
   analysis: Analysis | null = null;
+  /** An edit arrived while nothing was showing; re-run before showing again. */
+  stale = false;
   /** Start locations whose town hall spot the terrain refuses, by index into `analysis.starts`. */
   badHalls = new Set<number>();
   stranded: Stranded[] = [];
@@ -185,6 +192,8 @@ class Session {
   hover: { x: number; y: number } | null = null;
   refresh: (() => void)[] = [];
   underText: ((html: string) => void) | null = null;
+  /** Set by `activate`: opens the details panel. */
+  openDetails: () => void = () => {};
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -197,7 +206,9 @@ class Session {
 
   save() { this.api.storage.set("settings", this.settings); }
   notify() { for (const r of this.refresh) r(); }
-  get active() { return this.tool?.isActive() ?? false; }
+  get active() { return this.view?.isVisible() ?? false; }
+  get listening() { return this.active || (this.panel?.isOpen() ?? false) || (this.details?.isOpen() ?? false); }
+  redraw() { this.view?.redraw(); }
 
   /** The chokes narrow enough to matter, narrowest first. */
   chokes() {
@@ -207,14 +218,15 @@ class Session {
     return a.chokes.filter((c) => c.width <= max);
   }
 
-  /** Re-run soon: edits arrive in bursts. */
+  /** Re-run soon: edits arrive in bursts. With nothing showing, just remember to. */
   schedule() {
-    if (!this.panel?.isOpen()) return;
+    if (!this.listening) { this.stale = true; return; }
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => { this.timer = null; void this.run(); }, 250);
   }
 
-  async run(): Promise<void> {
+  /** Read the map. `show` switches the overlay on afterwards (Analyse, the menu); a scheduled re-run leaves it as it is. */
+  async run(show = false): Promise<void> {
     if (this.running) { this.schedule(); return; }
     const api = this.api;
     const info = api.document.info();
@@ -283,8 +295,9 @@ class Session {
       this.highlight = null;
       const n = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
       api.ui.status(`Walkability: ${n(a.components.length, "island")}, ${n(a.areas.length, "area")}, ${n(this.chokes().length, "choke")}, ${n(a.seams.length, "height seam")} in ${a.took.toFixed(0)} ms`);
-      if (!this.active) this.show();
-      this.tool?.redraw();
+      this.stale = false;
+      if (show && !this.active) this.show();
+      this.redraw();
       this.notify();
     } catch (err) {
       api.log("analysis failed", err);
@@ -315,32 +328,26 @@ class Session {
     this.pick = null;
     this.stranded = [];
     this.badHalls.clear();
-    this.tool?.redraw();
+    this.stale = false;
+    this.redraw();
     this.notify();
   }
 
-  /* ── the map tool: the overlay and the readout ── */
+  /* ── the overlay: the picture and the readout ── */
 
-  show() {
-    if (this.active) return;
-    if (!this.api.document.isOpen()) return;
-    this.tool = this.api.ui.mapTool({
-      name: "Walkability",
-      hint: "hover to read the ground, click to pick an area",
-      cursor: "default",
-      onMove: (p) => this.onMove(p),
-      onDown: (p) => this.onDown(p),
-      draw: (ctx, view) => this.draw(ctx, view),
-      onStop: (reason) => {
-        if (reason !== "replaced") this.tool = null;
-        this.hover = null;
-        this.notify();
-      },
-    });
+  show() { this.view?.show(); }
+  hide() { this.view?.hide(); }
+
+  /** The overlay was switched, by whichever hand: read the map if there is nothing (current) to draw. */
+  onToggle(visible: boolean) {
+    if (visible) {
+      if ((!this.analysis || this.stale) && this.api.document.isOpen()) void this.run();
+    } else {
+      this.hover = null;
+      this.underText?.(`<span class="wlk-dim">The overlay is off.</span>`);
+    }
     this.notify();
   }
-
-  hide() { this.tool?.stop(); }
 
   private cellAt(p: MapPointer): { x: number; y: number } | null {
     const a = this.analysis;
@@ -351,32 +358,40 @@ class Session {
     return { x, y };
   }
 
-  private onMove(p: MapPointer) {
-    const c = this.cellAt(p);
+  /** The pointer over the map (any layer, any tool), or null once when it leaves. */
+  onHover(p: MapPointer | null) {
+    const c = p ? this.cellAt(p) : null;
+    if (!c && !this.hover) return;
     this.hover = c;
     this.underText?.(c ? this.describe(c.x, c.y) : `<span class="wlk-dim">Move the pointer over the map.</span>`);
-    this.tool?.redraw();
+    this.redraw();
   }
 
-  private onDown(p: MapPointer) {
-    const c = this.cellAt(p);
+  /** Let the user click an area (or, in the islands view, an island) on the map. */
+  async pickOnMap() {
+    if (!this.analysis) await this.run(true);
+    const t = await this.api.ui.pickTile({ prompt: this.settings.mode === "islands" ? "Click an island" : "Click an area" });
     const a = this.analysis;
-    if (!c || !a) return;
-    const at = c.y * a.w + c.x;
-    const mode = this.settings.mode;
-    if (mode === "islands") {
-      const id = a.component[at];
-      this.select(id >= 0 ? { kind: "island", id } : null);
-    } else {
-      const id = a.area[at];
-      this.select(id >= 0 ? { kind: "area", id } : null);
+    if (!t || !a) return;
+    // The tile's centre minitile, else the first cell of the tile that belongs somewhere.
+    const labels = this.settings.mode === "islands" ? a.component : a.area;
+    const cells = [{ x: 2, y: 2 }];
+    for (let y = 0; y < CELLS_PER_TILE; y++) for (let x = 0; x < CELLS_PER_TILE; x++) cells.push({ x, y });
+    let id = -1;
+    for (const c of cells) {
+      const cx = t.x * CELLS_PER_TILE + c.x, cy = t.y * CELLS_PER_TILE + c.y;
+      if (cx >= a.w || cy >= a.h) continue;
+      id = labels[cy * a.w + cx];
+      if (id >= 0) break;
     }
+    this.select(id >= 0 ? { kind: this.settings.mode === "islands" ? "island" : "area", id } : null);
+    if (!this.active) this.show();
   }
 
   select(pick: Pick) {
     this.pick = pick;
     this.highlight = null;
-    this.tool?.redraw();
+    this.redraw();
     this.notify();
   }
 
@@ -668,8 +683,37 @@ const COMMAND_CENTER = 106;
 const GEYSER = 188;
 const RESOURCES: ReadonlySet<number> = new Set([176, 177, 178, GEYSER]);
 
-/* ── The panel ──────────────────────────────────────────── */
+/* ── The panels ─────────────────────────────────────────── */
 
+type Row = { label: string; hint?: string; color?: string; bad?: boolean; on?: boolean; pick: Pick };
+
+/** A collapsible list of rows, each a click from its spot on the map. */
+function section(session: Session, openSections: Set<string>, key: string, title: string, count: number, items: Row[], empty: string, warn?: string): HTMLElement {
+  const det = h("details", { open: openSections.has(key) }) as HTMLDetailsElement;
+  det.addEventListener("toggle", () => { if (det.open) openSections.add(key); else openSections.delete(key); });
+  det.append(h("summary", null, title, h("span", { className: "wlk-n" }, String(count)), warn ? h("span", { className: "wlk-warn" }, warn) : null));
+  const list = h("div", { className: "wlk-list" });
+  if (!items.length) list.append(h("div", { className: "wlk-empty" }, empty));
+  for (const it of items) {
+    const el = h("div", { className: `wlk-item${it.on ? " on" : ""}${it.bad ? " bad" : ""}`, title: "Click to go there", onClick: () => session.goTo(it.pick) },
+      it.color ? h("span", { className: "wlk-sw", style: `background:${it.color}` }) : null,
+      h("span", { className: "wlk-grow" }, it.label),
+      it.hint ? h("span", { className: "wlk-hint" }, it.hint) : null,
+    );
+    list.append(el);
+  }
+  det.append(list);
+  return det;
+}
+
+const plural = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
+
+/** What the panels say when there is nothing to list. */
+function idleText(session: Session): string {
+  return session.api.document.isOpen() ? "Press Analyse, or switch the overlay on, to read the map." : "Open a map first.";
+}
+
+/** The settings, the readout of the cell under the pointer, and the problems. */
 function mountPanel(session: Session, body: HTMLElement): () => void {
   const api = session.api;
   const s = session.settings;
@@ -679,76 +723,58 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
   body.append(root);
 
   const status = h("div", { className: "wlk-status" });
-  const showBtn = W.button("Show overlay", { onClick: () => (session.active ? session.hide() : session.show()) });
-  const runBtn = W.button("Analyse", { primary: true, onClick: () => void session.run() });
-  root.append(h("div", { className: "wlk-top" }, runBtn, showBtn, h("span", { style: "flex:1" }), W.button("Copy report", { ghost: true, title: "Copy a text summary to the clipboard", onClick: () => session.copyReport() })));
+  const runBtn = W.button("Analyse", { primary: true, onClick: () => void session.run(true) });
+  const shown = W.checkbox("Overlay", { value: session.active, onChange: (v) => { if (v) session.show(); else session.hide(); } });
+  const detailsBtn = W.button("Details…", { title: "Every start location, pair, island, area and choke in a panel of its own", onClick: () => session.openDetails() });
+  root.append(h("div", { className: "wlk-top" }, runBtn, shown, h("span", { style: "flex:1" }), detailsBtn));
   root.append(status);
 
   const row = (label: string, ...children: Child[]) => h("div", { className: "wlk-row" }, h("label", null, label), h("div", { className: "wlk-in" }, ...children));
-  const redraw = () => { session.overlay = null; session.tool?.redraw(); };
+  const redraw = () => { session.overlay = null; session.redraw(); };
 
-  const modeSel = W.select(MODES.map((m) => ({ value: m.id, label: m.label })), { value: s.mode, onChange: (v) => { s.mode = v as Mode; session.save(); redraw(); render(); } });
+  const modeSel = W.select(MODES.map((m) => ({ value: m.id, label: m.label })), { value: s.mode, onChange: (v) => { s.mode = v as Mode; session.save(); redraw(); session.notify(); } });
   root.append(row("Overlay", modeSel));
   const tick = (label: string, key: "chokes" | "seams" | "starts" | "labels") => W.checkbox(label, { value: s[key], onChange: (v) => { s[key] = v; session.save(); redraw(); } });
   root.append(h("div", { className: "wlk-ticks" }, tick("Chokes", "chokes"), tick("Seams", "seams"), tick("Start locations", "starts"), tick("Labels", "labels")));
   const opacity = h("input", { type: "range", min: 10, max: 100, value: Math.round(s.opacity * 100) });
-  opacity.addEventListener("input", () => { s.opacity = Number(opacity.value) / 100; session.save(); session.tool?.redraw(); });
+  opacity.addEventListener("input", () => { s.opacity = Number(opacity.value) / 100; session.save(); session.redraw(); });
   root.append(row("Opacity", opacity));
 
   const sizeSel = W.select(UNIT_SIZES.map((u) => ({ value: u.radius, label: u.label })), { value: s.unitRadius, onChange: (v) => { s.unitRadius = Number(v); session.save(); void session.run(); } });
   root.append(row("Unit size", sizeSel));
   const minArea = W.number({ value: s.minArea, min: 1, max: 999, step: 1, onChange: (v) => { s.minArea = Math.max(1, Math.round(v)); session.save(); void session.run(); } });
-  const maxChoke = W.number({ value: s.maxChoke, min: 1, max: 64, step: 1, onChange: (v) => { s.maxChoke = Math.max(1, Math.round(v)); session.save(); redraw(); render(); } });
+  const maxChoke = W.number({ value: s.maxChoke, min: 1, max: 64, step: 1, onChange: (v) => { s.maxChoke = Math.max(1, Math.round(v)); session.save(); redraw(); session.notify(); } });
   root.append(row("Min. area", minArea, h("span", { style: "color:var(--text-dim,#99a2b3)" }, "tiles")));
   root.append(row("Chokes up to", maxChoke, h("span", { style: "color:var(--text-dim,#99a2b3)" }, "tiles wide")));
   root.append(W.checkbox("Buildings and resources block the way", { value: s.buildingsBlock, onChange: (v) => { s.buildingsBlock = v; session.save(); void session.run(); } }));
 
   const under = h("div", { className: "wlk-under" });
-  under.innerHTML = `<span class="wlk-dim">Move the pointer over the map.</span>`;
+  under.innerHTML = `<span class="wlk-dim">${session.active ? "Move the pointer over the map." : "The overlay is off."}</span>`;
   session.underText = (html) => { under.innerHTML = html; };
   root.append(under);
+  const pickBtn = W.button("Pick an area on the map", { ghost: true, onClick: () => void session.pickOnMap() });
+  root.append(h("div", { className: "wlk-top" }, pickBtn));
 
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
-  root.append(h("div", { className: "wlk-keys" }, h("kbd", null, "Esc"), " or a right-click hides the overlay and gives the map back to the layer's tools; Show overlay brings it back. The analysis follows every edit while this panel is open."));
+  root.append(h("div", { className: "wlk-keys" }, "The overlay stays on while you work on any layer and follows every edit; View ▸ Walkability, the Layers panel or ", h("kbd", null, "Ctrl+Shift+W"), " switch it off and on."));
 
-  const openSections = new Set<string>(["starts", "pairs", "problems", "stranded"]);
-
-  function section(key: string, title: string, count: number, items: { label: string; hint?: string; color?: string; bad?: boolean; on?: boolean; pick: Pick }[], empty: string, warn?: string): HTMLElement {
-    const det = h("details", { open: openSections.has(key) }) as HTMLDetailsElement;
-    det.addEventListener("toggle", () => { if (det.open) openSections.add(key); else openSections.delete(key); });
-    det.append(h("summary", null, title, h("span", { className: "wlk-n" }, String(count)), warn ? h("span", { className: "wlk-warn" }, warn) : null));
-    const list = h("div", { className: "wlk-list" });
-    if (!items.length) list.append(h("div", { className: "wlk-empty" }, empty));
-    for (const it of items) {
-      const el = h("div", { className: `wlk-item${it.on ? " on" : ""}${it.bad ? " bad" : ""}`, title: "Click to go there", onClick: () => session.goTo(it.pick) },
-        it.color ? h("span", { className: "wlk-sw", style: `background:${it.color}` }) : null,
-        h("span", { className: "wlk-grow" }, it.label),
-        it.hint ? h("span", { className: "wlk-hint" }, it.hint) : null,
-      );
-      list.append(el);
-    }
-    det.append(list);
-    return det;
-  }
+  const openSections = new Set<string>(["problems"]);
 
   function render() {
     const a = session.analysis;
-    showBtn.textContent = session.active ? "Hide overlay" : "Show overlay";
-    showBtn.disabled = !a;
+    shown.input.checked = session.active;
     results.replaceChildren();
     if (!a) {
-      status.textContent = api.document.isOpen() ? "Press Analyse to read the map." : "Open a map first.";
+      status.textContent = idleText(session);
       return;
     }
-    const n = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
     const chokes = session.chokes();
-    status.textContent = `${n(a.components.length, "island")}, ${n(a.areas.length, "area")}, ${n(chokes.length, "choke")}, ${n(a.seams.length, "height seam")} · ${a.took.toFixed(0)} ms`;
+    status.textContent = `${plural(a.components.length, "island")}, ${plural(a.areas.length, "area")}, ${plural(chokes.length, "choke")}, ${plural(a.seams.length, "height seam")} · ${a.took.toFixed(0)} ms${session.stale ? " · out of date" : ""}`;
     const is = (kind: NonNullable<Pick>["kind"], id: number) => session.pick?.kind === kind && session.pick.id === id;
     const player = (o: number) => api.names.player(o);
 
-    // Problems first, when there are any.
-    const problems: { label: string; hint?: string; bad: boolean; pick: Pick; on?: boolean }[] = [];
+    const problems: Row[] = [];
     a.starts.forEach((st, i) => {
       if (st.component < 0) problems.push({ label: `${player(st.owner)}'s start location is not on walkable ground`, bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
       else if (session.badHalls.has(i)) problems.push({ label: `${player(st.owner)}'s town hall spot is not buildable`, bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
@@ -762,65 +788,7 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
       if (island >= 0) continue;
       problems.push({ label: `${g.patches + g.geysers} resource${g.patches + g.geysers === 1 ? "" : "s"} with no walkable ground around them (first: ${g.first.name} at ${pxTiles(g.first.x)}, ${pxTiles(g.first.y)})`, bad: true, pick: null });
     }
-    if (problems.length) results.append(section("problems", "Problems", problems.length, problems.map((p) => ({ ...p, pick: p.pick })), "", undefined));
-
-    results.append(section("starts", "Start locations", a.starts.length, a.starts.map((st, i) => ({
-      label: `${player(st.owner)} at ${pxTiles(st.x)}, ${pxTiles(st.y)}`,
-      hint: st.component < 0 ? "off the ground" : `island ${st.component + 1} · area ${st.area + 1}`,
-      color: api.palette.playerColor(st.owner),
-      bad: st.component < 0 || session.badHalls.has(i),
-      on: is("start", i),
-      pick: { kind: "start", id: i },
-    })), "The map has no start locations."));
-
-    if (a.starts.length > 1) {
-      results.append(section("pairs", "Between start locations", a.pairs.length, a.pairs.map((p, i) => ({
-        label: `${player(a.starts[p.a].owner)} – ${player(a.starts[p.b].owner)}`,
-        hint: p.ground === null ? `air ${pxTiles(p.air)} · no ground route` : `air ${pxTiles(p.air)} · ground ${pxTiles(p.ground)} · ${tiles(p.bottleneck)} wide`,
-        bad: p.ground === null,
-        on: is("pair", i),
-        pick: { kind: "pair", id: i },
-      })), "", undefined));
-    }
-
-    // Resources no start location reaches by ground: island expansions, or a mistake.
-    const offGround = session.strandedByIsland().filter(([island]) => island >= 0);
-    if (offGround.length) {
-      results.append(section("stranded", "Resources off the main ground", offGround.length, offGround.map(([island, g]) => ({
-        label: `Island ${island + 1}: ${g.patches} patch${g.patches === 1 ? "" : "es"}, ${g.geysers} geyser${g.geysers === 1 ? "" : "s"}`,
-        hint: "no ground route from a start",
-        color: rgb(hsl(20 + ((island * 47) % 30), 0.9, 0.5)),
-        pick: { kind: "island", id: island } as Pick,
-      })), "", undefined));
-    }
-
-    const specks = s.minPocket * CELLS_PER_TILE * CELLS_PER_TILE;
-    const listed = a.components.filter((c) => c.starts.length || c.size >= specks);
-    const hidden = a.components.length - listed.length;
-    results.append(section("islands", "Islands and pockets", a.components.length, listed.map((c) => ({
-      label: `Island ${c.id + 1}: ${tiles(c.size / CELLS_PER_TILE)} tiles`,
-      hint: c.starts.length ? c.starts.map((i) => player(a.starts[i].owner)).join(", ") : a.starts.length ? "unreachable" : "",
-      color: rgb(c.starts.length ? idColor(c.id, 0.8, 0.5) : hsl(20 + ((c.id * 47) % 30), 0.9, 0.5)),
-      bad: !c.starts.length && a.starts.length > 0,
-      on: is("island", c.id),
-      pick: { kind: "island", id: c.id },
-    })), "No walkable ground.", hidden ? `+ ${hidden} under ${s.minPocket} tiles` : undefined));
-
-    results.append(section("areas", "Areas", a.areas.length, a.areas.map((ar) => ({
-      label: `Area ${ar.id + 1}: ${tiles(ar.size / CELLS_PER_TILE)} tiles`,
-      hint: `${ar.starts.length ? `${ar.starts.map((i) => player(a.starts[i].owner)).join(", ")} · ` : ""}${ar.chokes.length} choke${ar.chokes.length === 1 ? "" : "s"}`,
-      color: rgb(idColor(ar.id)),
-      on: is("area", ar.id),
-      pick: { kind: "area", id: ar.id },
-    })), "No areas."));
-
-    results.append(section("chokes", "Chokes", chokes.length, chokes.map((c) => ({
-      label: `${tiles(c.width)} tiles wide at ${tiles(c.x)}, ${tiles(c.y)}`,
-      hint: `area ${c.a + 1} ↔ ${c.b + 1}`,
-      color: "#ffd166",
-      on: is("choke", c.id),
-      pick: { kind: "choke", id: c.id },
-    })), `No passage up to ${s.maxChoke} tiles wide between areas.`, a.chokes.length > chokes.length ? `+ ${a.chokes.length - chokes.length} wider` : undefined));
+    results.append(section(session, openSections, "problems", "Problems", problems.length, problems, "None found.", undefined));
   }
 
   session.refresh.push(render);
@@ -831,28 +799,145 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
   };
 }
 
+/** Every start location, pair, island, area and choke, each a click from its spot. */
+function mountDetails(session: Session, body: HTMLElement): () => void {
+  const api = session.api;
+  const s = session.settings;
+  body.append(h("style", null, STYLE));
+  const root = h("div", { className: "wlk" });
+  body.append(root);
+  const status = h("div", { className: "wlk-status" });
+  root.append(h("div", { className: "wlk-top" }, status, h("span", { style: "flex:1" }), api.ui.widgets.button("Copy report", { ghost: true, title: "Copy a text summary to the clipboard", onClick: () => session.copyReport() })));
+  const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
+  root.append(results);
+  const openSections = new Set<string>(["starts", "pairs", "stranded"]);
+
+  function render() {
+    const a = session.analysis;
+    results.replaceChildren();
+    if (!a) {
+      status.textContent = idleText(session);
+      return;
+    }
+    status.textContent = `${MODES.find((m) => m.id === s.mode)?.label ?? ""} · ${a.took.toFixed(0)} ms${session.stale ? " · out of date" : ""}`;
+    const chokes = session.chokes();
+    const is = (kind: NonNullable<Pick>["kind"], id: number) => session.pick?.kind === kind && session.pick.id === id;
+    const player = (o: number) => api.names.player(o);
+    const list = (key: string, title: string, count: number, items: Row[], empty: string, warn?: string) => results.append(section(session, openSections, key, title, count, items, empty, warn));
+
+    list("starts", "Start locations", a.starts.length, a.starts.map((st, i) => ({
+      label: `${player(st.owner)} at ${pxTiles(st.x)}, ${pxTiles(st.y)}`,
+      hint: st.component < 0 ? "off the ground" : `island ${st.component + 1} · area ${st.area + 1}`,
+      color: api.palette.playerColor(st.owner),
+      bad: st.component < 0 || session.badHalls.has(i),
+      on: is("start", i),
+      pick: { kind: "start", id: i },
+    })), "The map has no start locations.");
+
+    if (a.starts.length > 1) {
+      list("pairs", "Between start locations", a.pairs.length, a.pairs.map((p, i) => ({
+        label: `${player(a.starts[p.a].owner)} – ${player(a.starts[p.b].owner)}`,
+        hint: p.ground === null ? `air ${pxTiles(p.air)} · no ground route` : `air ${pxTiles(p.air)} · ground ${pxTiles(p.ground)} · ${tiles(p.bottleneck)} wide`,
+        bad: p.ground === null,
+        on: is("pair", i),
+        pick: { kind: "pair", id: i },
+      })), "");
+    }
+
+    // Resources no start location reaches by ground: island expansions, or a mistake.
+    const offGround = session.strandedByIsland().filter(([island]) => island >= 0);
+    if (offGround.length) {
+      list("stranded", "Resources off the main ground", offGround.length, offGround.map(([island, g]) => ({
+        label: `Island ${island + 1}: ${g.patches} patch${g.patches === 1 ? "" : "es"}, ${g.geysers} geyser${g.geysers === 1 ? "" : "s"}`,
+        hint: "no ground route from a start",
+        color: rgb(hsl(20 + ((island * 47) % 30), 0.9, 0.5)),
+        pick: { kind: "island", id: island } as Pick,
+      })), "");
+    }
+
+    const specks = s.minPocket * CELLS_PER_TILE * CELLS_PER_TILE;
+    const listed = a.components.filter((c) => c.starts.length || c.size >= specks);
+    const hidden = a.components.length - listed.length;
+    list("islands", "Islands and pockets", a.components.length, listed.map((c) => ({
+      label: `Island ${c.id + 1}: ${tiles(c.size / CELLS_PER_TILE)} tiles`,
+      hint: c.starts.length ? c.starts.map((i) => player(a.starts[i].owner)).join(", ") : a.starts.length ? "unreachable" : "",
+      color: rgb(c.starts.length ? idColor(c.id, 0.8, 0.5) : hsl(20 + ((c.id * 47) % 30), 0.9, 0.5)),
+      bad: !c.starts.length && a.starts.length > 0,
+      on: is("island", c.id),
+      pick: { kind: "island", id: c.id },
+    })), "No walkable ground.", hidden ? `+ ${hidden} under ${s.minPocket} tiles` : undefined);
+
+    list("areas", "Areas", a.areas.length, a.areas.map((ar) => ({
+      label: `Area ${ar.id + 1}: ${tiles(ar.size / CELLS_PER_TILE)} tiles`,
+      hint: `${ar.starts.length ? `${ar.starts.map((i) => player(a.starts[i].owner)).join(", ")} · ` : ""}${ar.chokes.length} choke${ar.chokes.length === 1 ? "" : "s"}`,
+      color: rgb(idColor(ar.id)),
+      on: is("area", ar.id),
+      pick: { kind: "area", id: ar.id },
+    })), "No areas.");
+
+    list("chokes", "Chokes", chokes.length, chokes.map((c) => ({
+      label: `${tiles(c.width)} tiles wide at ${tiles(c.x)}, ${tiles(c.y)}`,
+      hint: `area ${c.a + 1} ↔ ${c.b + 1}`,
+      color: "#ffd166",
+      on: is("choke", c.id),
+      pick: { kind: "choke", id: c.id },
+    })), `No passage up to ${s.maxChoke} tiles wide between areas.`, a.chokes.length > chokes.length ? `+ ${a.chokes.length - chokes.length} wider` : undefined);
+  }
+
+  session.refresh.push(render);
+  render();
+  return () => { session.refresh = session.refresh.filter((r) => r !== render); };
+}
+
 /* ── activate ───────────────────────────────────────────── */
 
 export default function activate(api: PluginApi) {
   const session = new Session(api);
 
+  // The overlay is registered once and lives in the editor's chrome: View ▸ Walkability,
+  // the Layers panel. Off to begin with — switching it on reads the map.
+  session.view = api.ui.overlay({
+    name: "Walkability",
+    visible: false,
+    above: "objects",
+    draw: (ctx, view) => session.draw(ctx, view),
+    onHover: (p) => session.onHover(p),
+    onToggle: (v) => session.onToggle(v),
+  });
+
   const open = () => {
-    if (session.panel?.isOpen()) { void session.run(); return; }
+    if (session.panel?.isOpen()) { void session.run(true); return; }
     session.panel = api.ui.panel({
       title: "Walkability",
       width: 320,
       mount: (body) => mountPanel(session, body),
-      onClose: () => { session.panel = null; session.hide(); },
+      onClose: () => { session.panel = null; },
     });
-    void session.run();
+    void session.run(true);
+  };
+  session.openDetails = () => {
+    if (session.details?.isOpen()) return;
+    session.details = api.ui.panel({
+      title: "Walkability details",
+      width: 340,
+      mount: (body) => mountDetails(session, body),
+      onClose: () => { session.details = null; },
+    });
+    if (!session.analysis || session.stale) void session.run();
+  };
+  const toggle = () => {
+    if (!api.document.isOpen()) { api.ui.status("Walkability: open a map first"); return; }
+    session.view?.toggle();
   };
 
   api.commands.register({ id: "open", title: "Walkability…", enabled: () => api.document.isOpen(), run: open });
-  api.commands.register({ id: "analyse", title: "Analyse walkability", enabled: () => api.document.isOpen(), run: () => { open(); return session.analysis; } });
+  api.commands.register({ id: "toggle", title: "Walkability overlay", enabled: () => api.document.isOpen(), run: toggle });
+  api.commands.register({ id: "details", title: "Walkability details", enabled: () => api.document.isOpen(), run: () => session.openDetails() });
+  api.commands.register({ id: "analyse", title: "Analyse walkability", enabled: () => api.document.isOpen(), run: async () => { await session.run(true); return session.analysis; } });
   api.commands.register({ id: "copy-report", title: "Copy walkability report", enabled: () => session.analysis !== null, run: () => session.copyReport() });
   api.menu.add("Tools", { label: "Walkability…", enabled: () => api.document.isOpen(), command: "open" });
-  api.contextMenu.add("viewport", { label: "Walkability…", command: "open" });
-  api.hotkeys.add("Ctrl+Shift+W", { command: "open" });
+  api.contextMenu.add("viewport", { label: "Walkability overlay", command: "toggle" });
+  api.hotkeys.add("Ctrl+Shift+W", { command: "toggle" });
 
   for (const event of ["terrain", "units", "doodads", "settings"] as const) api.events.on(event, () => session.schedule());
   api.events.on("document", () => {

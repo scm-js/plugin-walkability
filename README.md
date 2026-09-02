@@ -40,15 +40,19 @@ tick it to turn it on. To pin a version, add a ref: `github:scm-js/plugin-walkab
 
 ## Use
 
-**Tools ▸ Walkability…** (also `Ctrl+Shift+W`, or *Walkability…* on the map's right-click
-menu) opens the panel and analyses the open map. A 128 × 128 map takes well under a tenth
-of a second. The panel floats over the map and follows every edit while it is open.
+**View ▸ Walkability** (also `Ctrl+Shift+W`, the eye in the Layers panel, or *Walkability
+overlay* on the map's right-click menu) switches the overlay on: it reads the open map — a
+128 × 128 map takes well under a tenth of a second — and draws the result over it. The
+overlay is a view, not a tool: the map's own tools keep working underneath, so you can
+place units and doodads with it showing, and it follows every edit. Move the pointer over
+the map to read the cell under it (walkable or not, how far from the nearest wall, ground
+height, ramp, island, area) in the panel.
 
-The overlay is drawn by a map tool, so while it shows, the map's own tools are paused:
-move the pointer over the map to read the cell under it (walkable or not, how far from
-the nearest wall, ground height, ramp, island, area), click to pick the area or island
-there. `Esc` or a right-click hides the overlay and hands the map back; **Show overlay**
-brings it back.
+**Tools ▸ Walkability…** opens the panel: what the overlay shows, its opacity, the unit
+size, the readout of the cell under the pointer, and the problems found. **Pick an area on
+the map** asks for one click and highlights the area (in the islands view, the island)
+there; **Details…** opens a second panel with every start location, pair, island, area and
+choke, and **Copy report** there puts a text summary on the clipboard.
 
 | Overlay | What it shows |
 | --- | --- |
@@ -58,9 +62,8 @@ brings it back.
 | Ground height and seams | Low, mid and high ground, ramps in white, seams in red. |
 | Walkable ground | Green where a unit can stand, red where it cannot, yellow where the ground is walkable but too tight for the chosen unit size, grey under buildings. |
 
-The lists below the overlay all go somewhere: click a start location, a pair, an island,
-an area or a choke to scroll to it and highlight it. **Copy report** puts a text summary
-on the clipboard.
+The rows in the details panel all go somewhere: click a start location, a pair, an
+island, an area or a choke to scroll to it and highlight it.
 
 Options:
 
@@ -78,7 +81,7 @@ Options:
 | | |
 | --- | --- |
 | `plugin.json` | the manifest the editor reads (name, version, `entry`, `icon`, the API version it needs) |
-| `plugin.ts` | `activate(api)`: building the grid from the open map, the overlay bitmaps, the panel, the map tool |
+| `plugin.ts` | `activate(api)`: building the grid from the open map, the overlay bitmaps, the overlay (`api.ui.overlay`) and the two panels |
 | `analysis.ts` | the pure part: the minitile grid, clearance (an exact Euclidean distance transform), islands, the watershed into areas and chokes, seams, the start-to-start routes, the text report |
 | `plugin-api/` | the editor's emitted type declarations, vendored so this repository type-checks alone |
 | `tests/` | vitest over `analysis.ts` |
@@ -125,8 +128,8 @@ changes, serve this directory with CORS enabled (`npx serve --cors .`) and add
 A plugin runs with the editor's own privileges. There is no sandbox.
 
 See [`docs/plugins.md`](https://github.com/jeany55/scm-js/blob/main/docs/plugins.md) in the editor
-for the API tour; this plugin is the worked example for a read-only analysis drawn with
-`api.ui.mapTool`'s `draw` over `api.tileset.raw()`.
+for the API tour; this plugin is the worked example for `api.ui.overlay` — a read-only
+analysis drawn over the map, switched from the View menu, over `api.tileset.raw()`.
 
 ## Licence
 
