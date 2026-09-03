@@ -276,7 +276,7 @@ class Session {
       this.analysis = a;
       this.badHalls.clear();
       a.starts.forEach((s, i) => {
-        if (api.query.placement(COMMAND_CENTER, s.x, s.y).problem === "terrain") this.badHalls.add(i);
+        if (api.query.placement(COMMAND_CENTER, s.x, s.y)?.problem === "terrain") this.badHalls.add(i);
       });
       this.stranded = [];
       if (a.starts.length) {
