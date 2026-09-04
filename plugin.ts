@@ -17,10 +17,10 @@
  * the watershed segmentation, the seams and the start-to-start routes — with its own
  * tests. This file is the editor side: building the grid from the open map, the
  * overlay bitmap per view mode, the overlay and the panels. It reads the map and never
- * writes to it. `plugin-api/` is the editor's emitted type declarations, vendored so
- * the repository type-checks alone; the host erases the type-only import.
+ * writes to it. `@scm-js/plugin-api` is the editor's type declarations, a devDependency
+ * generated from its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { MapPointer, MapView, OverlayHandle, PanelHandle, PluginApi } from "./plugin-api/plugins/api";
+import type { MapPointer, MapView, OverlayHandle, PanelHandle, PluginApi } from "@scm-js/plugin-api";
 import {
   analyse, blockBoxes, CELL_PX, CELLS_PER_TILE, Cell, componentsAround, gridFromTiles, pxTiles, report, tiles,
   type Analysis, type PixelBox, type StartInput,
