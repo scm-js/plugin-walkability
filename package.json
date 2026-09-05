@@ -1,6 +1,6 @@
 {
   "name": "scmjs-plugin-walkability",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "Walkability — a plugin for the scmJS StarCraft map editor.",
   "author": "Jeany",

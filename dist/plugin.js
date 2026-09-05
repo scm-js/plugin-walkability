@@ -773,6 +773,7 @@ var Session = class {
   openDetails = () => {
   };
   timer = null;
+  /** A run is under way: the panels show it (a ring in the status, the last results dimmed under a note). */
   running = false;
   api;
   constructor(api) {
@@ -828,6 +829,7 @@ var Session = class {
       return;
     }
     this.running = true;
+    this.notify();
     try {
       if (!api.tileset.isLoaded()) {
         api.ui.status("Walkability: loading the tileset\u2026");
@@ -897,12 +899,12 @@ var Session = class {
       this.stale = false;
       if (show && !this.active) this.show();
       this.redraw();
-      this.notify();
     } catch (err) {
       api.log("analysis failed", err);
       api.ui.status(`Walkability: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       this.running = false;
+      this.notify();
     }
   }
   pickStillValid() {
@@ -1406,9 +1408,19 @@ function mountPanel(session, body) {
   root.append(results);
   root.append(h("div", { className: "wlk-keys" }, "The overlay stays on while you work on any layer and follows every edit; View \u25B8 Walkability, the Layers panel or ", h("kbd", null, "Ctrl+Shift+W"), " switch it off and on."));
   const openSections = /* @__PURE__ */ new Set(["problems"]);
+  let cover = null;
   function render() {
     const a = session.analysis;
     shown.input.checked = session.active;
+    if (session.running) {
+      status.replaceChildren(W.spinner({ size: "sm", label: a ? "Reading the map again\u2026" : "Reading the map\u2026" }));
+      if (results.childElementCount) cover ??= W.busy(results, "Reading\u2026");
+      runBtn.setBusy(true);
+      return;
+    }
+    cover?.done();
+    cover = null;
+    runBtn.setBusy(false);
     results.replaceChildren();
     if (!a) {
       status.textContent = idleText(session);
@@ -1437,6 +1449,7 @@ function mountPanel(session, body) {
   session.refresh.push(render);
   render();
   return () => {
+    cover?.done();
     session.refresh = session.refresh.filter((r) => r !== render);
     session.underText = null;
   };
@@ -1452,8 +1465,16 @@ function mountDetails(session, body) {
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
   const openSections = /* @__PURE__ */ new Set(["starts", "pairs", "stranded"]);
+  let cover = null;
   function render() {
     const a = session.analysis;
+    if (session.running) {
+      status.replaceChildren(api.ui.widgets.spinner({ size: "sm", label: "Reading the map\u2026" }));
+      if (results.childElementCount) cover ??= api.ui.widgets.busy(results, "Reading\u2026");
+      return;
+    }
+    cover?.done();
+    cover = null;
     results.replaceChildren();
     if (!a) {
       status.textContent = idleText(session);
@@ -1519,6 +1540,7 @@ function mountDetails(session, body) {
   session.refresh.push(render);
   render();
   return () => {
+    cover?.done();
     session.refresh = session.refresh.filter((r) => r !== render);
   };
 }

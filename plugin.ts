@@ -20,7 +20,7 @@
  * writes to it. `@scm-js/plugin-api` is the editor's type declarations, a devDependency
  * generated from its own `src/plugins/api.ts`; the host erases the type-only import.
  */
-import type { MapPointer, MapView, OverlayHandle, PanelHandle, PluginApi } from "@scm-js/plugin-api";
+import type { BusyHandle, MapPointer, MapView, OverlayHandle, PanelHandle, PluginApi } from "@scm-js/plugin-api";
 import {
   analyse, blockBoxes, CELL_PX, CELLS_PER_TILE, Cell, componentsAround, gridFromTiles, pxTiles, report, tiles,
   type Analysis, type PixelBox, type StartInput,
@@ -195,7 +195,8 @@ class Session {
   /** Set by `activate`: opens the details panel. */
   openDetails: () => void = () => {};
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private running = false;
+  /** A run is under way: the panels show it (a ring in the status, the last results dimmed under a note). */
+  running = false;
 
   readonly api: PluginApi;
 
@@ -233,6 +234,7 @@ class Session {
     const scn = api.document.scenario();
     if (!info || !scn) { this.clear(); this.api.ui.status("Walkability: open a map first"); return; }
     this.running = true;
+    this.notify();
     try {
       if (!api.tileset.isLoaded()) {
         api.ui.status("Walkability: loading the tileset…");
@@ -298,12 +300,13 @@ class Session {
       this.stale = false;
       if (show && !this.active) this.show();
       this.redraw();
-      this.notify();
     } catch (err) {
       api.log("analysis failed", err);
       api.ui.status(`Walkability: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
+      // The panels repaint once the run is over, whichever way it ended.
       this.running = false;
+      this.notify();
     }
   }
 
@@ -760,10 +763,21 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
   root.append(h("div", { className: "wlk-keys" }, "The overlay stays on while you work on any layer and follows every edit; View ▸ Walkability, the Layers panel or ", h("kbd", null, "Ctrl+Shift+W"), " switch it off and on."));
 
   const openSections = new Set<string>(["problems"]);
+  let cover: BusyHandle | null = null;
 
   function render() {
     const a = session.analysis;
     shown.input.checked = session.active;
+    if (session.running) {
+      // The last readout stays, dimmed under a note, until the new one replaces it.
+      status.replaceChildren(W.spinner({ size: "sm", label: a ? "Reading the map again…" : "Reading the map…" }));
+      if (results.childElementCount) cover ??= W.busy(results, "Reading…");
+      runBtn.setBusy(true);
+      return;
+    }
+    cover?.done();
+    cover = null;
+    runBtn.setBusy(false);
     results.replaceChildren();
     if (!a) {
       status.textContent = idleText(session);
@@ -794,6 +808,7 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
   session.refresh.push(render);
   render();
   return () => {
+    cover?.done();
     session.refresh = session.refresh.filter((r) => r !== render);
     session.underText = null;
   };
@@ -811,9 +826,17 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
   const openSections = new Set<string>(["starts", "pairs", "stranded"]);
+  let cover: BusyHandle | null = null;
 
   function render() {
     const a = session.analysis;
+    if (session.running) {
+      status.replaceChildren(api.ui.widgets.spinner({ size: "sm", label: "Reading the map…" }));
+      if (results.childElementCount) cover ??= api.ui.widgets.busy(results, "Reading…");
+      return;
+    }
+    cover?.done();
+    cover = null;
     results.replaceChildren();
     if (!a) {
       status.textContent = idleText(session);
@@ -886,7 +909,7 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
 
   session.refresh.push(render);
   render();
-  return () => { session.refresh = session.refresh.filter((r) => r !== render); };
+  return () => { cover?.done(); session.refresh = session.refresh.filter((r) => r !== render); };
 }
 
 /* ── activate ───────────────────────────────────────────── */
