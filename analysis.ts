@@ -26,6 +26,7 @@
  *      locations and the width of the narrowest passage on the widest route between
  *      them (a maximin path over the clearance map).
  */
+import { t } from "./i18n";
 
 export const CELL_PX = 8;
 export const CELLS_PER_TILE = 4;
@@ -822,41 +823,43 @@ export function pxTiles(px: number): string {
   return String(Math.round(px / (CELL_PX * CELLS_PER_TILE)));
 }
 
-/** A plain-text report of the analysis, for the clipboard. */
+/** A plain-text report of the analysis, for the clipboard, in the editor's language. */
 export function report(a: Analysis, names: { player(owner: number): string; area?(id: number): string }): string {
   const lines: string[] = [];
-  const areaName = names.area ?? ((id: number) => `Area ${id + 1}`);
-  lines.push(`Walkability: ${a.components.length} island${a.components.length === 1 ? "" : "s"}, ${a.areas.length} area${a.areas.length === 1 ? "" : "s"}, ${a.chokes.length} choke${a.chokes.length === 1 ? "" : "s"}, ${a.seams.length} height seam${a.seams.length === 1 ? "" : "s"} (${a.took.toFixed(0)} ms)`);
+  const areaName = names.area ?? ((id: number) => t("Area {n}", { n: id + 1 }));
+  lines.push(t("Walkability: {islands, plural, one {# island} other {# islands}}, {areas, plural, one {# area} other {# areas}}, {chokes, plural, one {# choke} other {# chokes}}, {seams, plural, one {# height seam} other {# height seams}} ({ms} ms)",
+    { islands: a.components.length, areas: a.areas.length, chokes: a.chokes.length, seams: a.seams.length, ms: a.took.toFixed(0) }));
   lines.push("");
-  lines.push("Start locations");
+  lines.push(t("Start locations"));
   for (const s of a.starts) {
-    lines.push(`  ${names.player(s.owner)} at ${pxTiles(s.x)}, ${pxTiles(s.y)}: ${s.component < 0 ? "not on walkable ground" : `island ${s.component + 1}, ${areaName(s.area)}`}`);
+    const where = s.component < 0 ? t("not on walkable ground") : t("island {n}, {area}", { n: s.component + 1, area: areaName(s.area) });
+    lines.push(`  ${t("{player} at {x}, {y}: {where}", { player: names.player(s.owner), x: pxTiles(s.x), y: pxTiles(s.y), where })}`);
   }
   if (a.pairs.length) {
     lines.push("");
-    lines.push("Between start locations (tiles)");
+    lines.push(t("Between start locations (tiles)"));
     for (const p of a.pairs) {
       const sa = a.starts[p.a];
       const sb = a.starts[p.b];
-      const ground = p.ground === null ? "no ground route" : `ground ${pxTiles(p.ground)}, narrowest ${tiles(p.bottleneck)} wide`;
-      lines.push(`  ${names.player(sa.owner)} – ${names.player(sb.owner)}: air ${pxTiles(p.air)}, ${ground}`);
+      const ground = p.ground === null ? t("no ground route") : t("ground {ground}, narrowest {width} wide", { ground: pxTiles(p.ground), width: tiles(p.bottleneck) });
+      lines.push(`  ${t("{a} – {b}: air {air}, {ground}", { a: names.player(sa.owner), b: names.player(sb.owner), air: pxTiles(p.air), ground })}`);
     }
   }
   lines.push("");
-  lines.push("Islands (largest first)");
+  lines.push(t("Islands (largest first)"));
   for (const c of a.components) {
-    const who = c.starts.length ? c.starts.map((i) => names.player(a.starts[i].owner)).join(", ") : "no start location";
-    lines.push(`  Island ${c.id + 1}: ${tiles(c.size / CELLS_PER_TILE)} tiles, ${who}`);
+    const who = c.starts.length ? c.starts.map((i) => names.player(a.starts[i].owner)).join(", ") : t("no start location");
+    lines.push(`  ${t("Island {n}: {size} tiles, {who}", { n: c.id + 1, size: tiles(c.size / CELLS_PER_TILE), who })}`);
   }
   lines.push("");
-  lines.push("Chokes (narrowest first)");
+  lines.push(t("Chokes (narrowest first)"));
   for (const c of a.chokes) {
-    lines.push(`  ${tiles(c.width)} tiles wide at ${tiles(c.x)}, ${tiles(c.y)} between ${areaName(c.a)} and ${areaName(c.b)}`);
+    lines.push(`  ${t("{width} tiles wide at {x}, {y} between {a} and {b}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y), a: areaName(c.a), b: areaName(c.b) })}`);
   }
   if (a.seams.length) {
     lines.push("");
-    lines.push("Height seams (a unit can walk between ground heights with no ramp)");
-    for (const s of a.seams) lines.push(`  ${s.size} minitiles at ${tiles(s.centre.x)}, ${tiles(s.centre.y)}: height ${s.levels[0]} meets ${s.levels[1]}`);
+    lines.push(t("Height seams (a unit can walk between ground heights with no ramp)"));
+    for (const s of a.seams) lines.push(`  ${t("{size} minitiles at {x}, {y}: height {from} meets {to}", { size: s.size, x: tiles(s.centre.x), y: tiles(s.centre.y), from: s.levels[0], to: s.levels[1] })}`);
   }
   return lines.join("\n");
 }

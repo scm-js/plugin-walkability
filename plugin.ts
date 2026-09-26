@@ -25,6 +25,8 @@ import {
   analyse, blockBoxes, CELL_PX, CELLS_PER_TILE, Cell, componentsAround, gridFromTiles, pxTiles, report, tiles,
   type Analysis, type PixelBox, type StartInput,
 } from "./analysis";
+import { bindLanguage, msg, t, translate } from "./i18n";
+import { KO } from "./ko";
 
 /* ── DOM helpers ────────────────────────────────────────── */
 
@@ -83,19 +85,19 @@ const STYLE = `
 type Mode = "areas" | "islands" | "clearance" | "height" | "walk";
 
 const MODES: { id: Mode; label: string }[] = [
-  { id: "areas", label: "Areas and chokes" },
-  { id: "islands", label: "Islands and pockets" },
-  { id: "clearance", label: "Clearance (room to move)" },
-  { id: "height", label: "Ground height and seams" },
-  { id: "walk", label: "Walkable ground" },
+  { id: "areas", label: msg("Areas and chokes") },
+  { id: "islands", label: msg("Islands and pockets") },
+  { id: "clearance", label: msg("Clearance (room to move)") },
+  { id: "height", label: msg("Ground height and seams") },
+  { id: "walk", label: msg("Walkable ground") },
 ];
 
 /** Cells of clearance a unit needs; a Marine is 23 px across, three cells. */
 const UNIT_SIZES: { radius: number; label: string }[] = [
-  { radius: 0, label: "Ground as flagged" },
-  { radius: 1, label: "Small units (Marine, Zergling)" },
-  { radius: 2, label: "Medium units (Dragoon, Hydralisk)" },
-  { radius: 3, label: "Large units (Siege Tank, Ultralisk)" },
+  { radius: 0, label: msg("Ground as flagged") },
+  { radius: 1, label: msg("Small units (Marine, Zergling)") },
+  { radius: 2, label: msg("Medium units (Dragoon, Hydralisk)") },
+  { radius: 3, label: msg("Large units (Siege Tank, Ultralisk)") },
 ];
 
 interface Settings {
@@ -147,6 +149,9 @@ function idColor(id: number, s = 0.75, l = 0.55): [number, number, number] {
 }
 
 const rgb = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+/** `Player 3`, in the reader's language (`api.names.player` is the English trigger vocabulary). */
+const playerName = (slot: number): string => t("Player {n}", { n: slot + 1 });
 
 const RED: [number, number, number] = [255, 80, 70];
 const GREY: [number, number, number] = [40, 40, 48];
@@ -232,17 +237,17 @@ class Session {
     const api = this.api;
     const info = api.document.info();
     const scn = api.document.scenario();
-    if (!info || !scn) { this.clear(); this.api.ui.status("Walkability: open a map first"); return; }
+    if (!info || !scn) { this.clear(); this.api.ui.status(t("Walkability: open a map first")); return; }
     this.running = true;
     this.notify();
     try {
       if (!api.tileset.isLoaded()) {
-        api.ui.status("Walkability: loading the tileset…");
+        api.ui.status(t("Walkability: loading the tileset…"));
         await api.tileset.load();
       }
       if (!api.data.ready()) await api.data.load();
       const raw = api.tileset.raw();
-      if (!raw) { this.clear(); api.ui.status("Walkability: the tileset graphics are not available, so there are no minitile flags to read"); return; }
+      if (!raw) { this.clear(); api.ui.status(t("Walkability: the tileset graphics are not available, so there are no minitile flags to read")); return; }
       const ts = raw.tileset;
       const grid = gridFromTiles(info.width, info.height, scn.tiles, (id) => {
         const group = ts.groups[id >> 4];
@@ -295,14 +300,14 @@ class Session {
       if (this.pick && !this.pickStillValid()) this.pick = null;
       this.overlay = null;
       this.highlight = null;
-      const n = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
-      api.ui.status(`Walkability: ${n(a.components.length, "island")}, ${n(a.areas.length, "area")}, ${n(this.chokes().length, "choke")}, ${n(a.seams.length, "height seam")} in ${a.took.toFixed(0)} ms`);
+      api.ui.status(t("Walkability: {islands, plural, one {# island} other {# islands}}, {areas, plural, one {# area} other {# areas}}, {chokes, plural, one {# choke} other {# chokes}}, {seams, plural, one {# height seam} other {# height seams}} in {ms} ms",
+        { islands: a.components.length, areas: a.areas.length, chokes: this.chokes().length, seams: a.seams.length, ms: a.took.toFixed(0) }));
       this.stale = false;
       if (show && !this.active) this.show();
       this.redraw();
     } catch (err) {
       api.log("analysis failed", err);
-      api.ui.status(`Walkability: ${err instanceof Error ? err.message : String(err)}`);
+      api.ui.status(t("Walkability: {error}", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       // The panels repaint once the run is over, whichever way it ended.
       this.running = false;
@@ -347,7 +352,7 @@ class Session {
       if ((!this.analysis || this.stale) && this.api.document.isOpen()) void this.run();
     } else {
       this.hover = null;
-      this.underText?.(`<span class="wlk-dim">The overlay is off.</span>`);
+      this.underText?.(`<span class="wlk-dim">${t("The overlay is off.")}</span>`);
     }
     this.notify();
   }
@@ -366,23 +371,23 @@ class Session {
     const c = p ? this.cellAt(p) : null;
     if (!c && !this.hover) return;
     this.hover = c;
-    this.underText?.(c ? this.describe(c.x, c.y) : `<span class="wlk-dim">Move the pointer over the map.</span>`);
+    this.underText?.(c ? this.describe(c.x, c.y) : `<span class="wlk-dim">${t("Move the pointer over the map.")}</span>`);
     this.redraw();
   }
 
   /** Let the user click an area (or, in the islands view, an island) on the map. */
   async pickOnMap() {
     if (!this.analysis) await this.run(true);
-    const t = await this.api.ui.pickTile({ prompt: this.settings.mode === "islands" ? "Click an island" : "Click an area" });
+    const tile = await this.api.ui.pickTile({ prompt: this.settings.mode === "islands" ? t("Click an island") : t("Click an area") });
     const a = this.analysis;
-    if (!t || !a) return;
+    if (!tile || !a) return;
     // The tile's centre minitile, else the first cell of the tile that belongs somewhere.
     const labels = this.settings.mode === "islands" ? a.component : a.area;
     const cells = [{ x: 2, y: 2 }];
     for (let y = 0; y < CELLS_PER_TILE; y++) for (let x = 0; x < CELLS_PER_TILE; x++) cells.push({ x, y });
     let id = -1;
     for (const c of cells) {
-      const cx = t.x * CELLS_PER_TILE + c.x, cy = t.y * CELLS_PER_TILE + c.y;
+      const cx = tile.x * CELLS_PER_TILE + c.x, cy = tile.y * CELLS_PER_TILE + c.y;
       if (cx >= a.w || cy >= a.h) continue;
       id = labels[cy * a.w + cx];
       if (id >= 0) break;
@@ -420,24 +425,24 @@ class Session {
     const at = y * a.w + x;
     const tx = Math.floor(x / CELLS_PER_TILE);
     const ty = Math.floor(y / CELLS_PER_TILE);
-    const parts: string[] = [`<b>${tx}, ${ty}</b> <span class="wlk-dim">(minitile ${x % 4}, ${y % 4})</span>`];
+    const parts: string[] = [`<b>${tx}, ${ty}</b> <span class="wlk-dim">${t("(minitile {x}, {y})", { x: x % 4, y: y % 4 })}</span>`];
     const cell = a.grid.cell[at];
-    if (cell === Cell.Wall) parts.push("unwalkable");
-    else if (cell === Cell.Building) parts.push("under a building");
-    else if (!a.passable[at]) parts.push(`walkable, but too tight for the chosen unit size (${tiles(a.alt[at])} tiles from a wall)`);
-    else parts.push(`walkable, ${tiles(a.alt[at])} tiles from the nearest wall`);
-    parts.push(`height ${a.grid.level[at]}${a.grid.ramp[at] ? ", ramp" : ""}`);
-    if (a.seamMask[at]) parts.push(`<span style="color:#ff9f7a">height seam: no ramp here</span>`);
+    if (cell === Cell.Wall) parts.push(t("unwalkable"));
+    else if (cell === Cell.Building) parts.push(t("under a building"));
+    else if (!a.passable[at]) parts.push(t("walkable, but too tight for the chosen unit size ({n} tiles from a wall)", { n: tiles(a.alt[at]) }));
+    else parts.push(t("walkable, {n} tiles from the nearest wall", { n: tiles(a.alt[at]) }));
+    parts.push(a.grid.ramp[at] ? t("height {n}, ramp", { n: a.grid.level[at] }) : t("height {n}", { n: a.grid.level[at] }));
+    if (a.seamMask[at]) parts.push(`<span style="color:#ff9f7a">${t("height seam: no ramp here")}</span>`);
     const comp = a.component[at];
     const area = a.area[at];
     if (comp >= 0) {
       const c = a.components[comp];
-      const who = c.starts.length ? c.starts.map((i) => this.api.names.player(a.starts[i].owner)).join(", ") : a.starts.length ? "no start location reaches it" : "";
-      parts.push(`Island ${comp + 1}${who ? ` <span class="wlk-dim">(${who})</span>` : ""}`);
+      const who = c.starts.length ? c.starts.map((i) => playerName(a.starts[i].owner)).join(", ") : a.starts.length ? t("no start location reaches it") : "";
+      parts.push(`${t("Island {n}", { n: comp + 1 })}${who ? ` <span class="wlk-dim">(${who})</span>` : ""}`);
     }
     if (area >= 0) {
       const ar = a.areas[area];
-      parts.push(`Area ${area + 1} <span class="wlk-dim">(${tiles(ar.size / CELLS_PER_TILE)} tiles, ${ar.chokes.length} choke${ar.chokes.length === 1 ? "" : "s"})</span>`);
+      parts.push(`${t("Area {n}", { n: area + 1 })} <span class="wlk-dim">(${t("{size} tiles, {chokes, plural, one {# choke} other {# chokes}}", { size: tiles(ar.size / CELLS_PER_TILE), chokes: ar.chokes.length })})</span>`);
     }
     return parts.join(" · ");
   }
@@ -593,7 +598,7 @@ class Session {
         ctx.setLineDash([3, 3]);
         ctx.strokeRect(view.x(s.bounds.x0 * CELL_PX) - 3, view.y(s.bounds.y0 * CELL_PX) - 3, (s.bounds.x1 - s.bounds.x0) * cellPx + 6, (s.bounds.y1 - s.bounds.y0) * cellPx + 6);
         ctx.setLineDash([]);
-        if (showLabels) label("no ramp", cx(s.centre.x), view.y(s.bounds.y0 * CELL_PX) - 12, "#ff8a7a");
+        if (showLabels) label(t("no ramp"), cx(s.centre.x), view.y(s.bounds.y0 * CELL_PX) - 12, "#ff8a7a");
       }
     }
     // Start locations: the player and the island, and a warning when the hall cannot be built.
@@ -607,8 +612,8 @@ class Session {
         ctx.lineWidth = picked ? 3 : 2;
         ctx.strokeRect(x - 2 * view.tilePx, y - 1.5 * view.tilePx, 4 * view.tilePx, 3 * view.tilePx);
         if (showLabels) {
-          const text = bad ? (s.component < 0 ? "not on walkable ground" : "hall spot not buildable") : `island ${s.component + 1}`;
-          label(`${this.api.names.player(s.owner)} · ${text}`, x, y + 1.5 * view.tilePx + 10, bad ? "#ff8a7a" : "#e6e9ef");
+          const text = bad ? (s.component < 0 ? t("not on walkable ground") : t("hall spot not buildable")) : t("island {n}", { n: s.component + 1 });
+          label(`${playerName(s.owner)} · ${text}`, x, y + 1.5 * view.tilePx + 10, bad ? "#ff8a7a" : "#e6e9ef");
         }
       });
     }
@@ -631,7 +636,7 @@ class Session {
         ctx.beginPath();
         ctx.arc(cx(p.chokeAt.x), cy(p.chokeAt.y), r, 0, Math.PI * 2);
         ctx.stroke();
-        if (showLabels) label(`narrowest: ${tiles(p.bottleneck)} tiles`, cx(p.chokeAt.x), cy(p.chokeAt.y) - r - 10, "#fff");
+        if (showLabels) label(t("narrowest: {n} tiles", { n: tiles(p.bottleneck) }), cx(p.chokeAt.x), cy(p.chokeAt.y) - r - 10, "#fff");
       }
     }
     // Stranded resources.
@@ -666,17 +671,19 @@ class Session {
   copyReport() {
     const a = this.analysis;
     if (!a) return;
-    const text = report({ ...a, chokes: this.chokes() }, { player: (o) => this.api.names.player(o) });
+    const text = report({ ...a, chokes: this.chokes() }, { player: (o) => playerName(o) });
     const extra: string[] = [];
-    for (const i of this.badHalls) extra.push(`  ${this.api.names.player(a.starts[i].owner)}: the town hall spot is not buildable`);
+    for (const i of this.badHalls) extra.push(`  ${t("{player}: the town hall spot is not buildable", { player: playerName(a.starts[i].owner) })}`);
     for (const [island, group] of this.strandedByIsland()) {
-      const where = island < 0 ? "with no walkable ground around them" : `on island ${island + 1}`;
-      extra.push(`  ${group.patches} mineral field${group.patches === 1 ? "" : "s"} and ${group.geysers} geyser${group.geysers === 1 ? "" : "s"} ${where}: no start location reaches them by ground`);
+      const counts = { patches: group.patches, geysers: group.geysers };
+      extra.push(`  ${island < 0
+        ? t("{patches, plural, one {# mineral field} other {# mineral fields}} and {geysers, plural, one {# geyser} other {# geysers}} with no walkable ground around them: no start location reaches them by ground", counts)
+        : t("{patches, plural, one {# mineral field} other {# mineral fields}} and {geysers, plural, one {# geyser} other {# geysers}} on island {n}: no start location reaches them by ground", { ...counts, n: island + 1 })}`);
     }
-    const full = extra.length ? `${text}\n\nProblems\n${extra.join("\n")}` : text;
+    const full = extra.length ? `${text}\n\n${t("Problems")}\n${extra.join("\n")}` : text;
     void navigator.clipboard?.writeText(full).then(
-      () => this.api.ui.status("Walkability: report copied"),
-      () => this.api.ui.status("Walkability: the browser refused the clipboard"),
+      () => this.api.ui.status(t("Walkability: report copied")),
+      () => this.api.ui.status(t("Walkability: the browser refused the clipboard")),
     );
   }
 }
@@ -698,7 +705,7 @@ function section(session: Session, openSections: Set<string>, key: string, title
   const list = h("div", { className: "wlk-list" });
   if (!items.length) list.append(h("div", { className: "wlk-empty" }, empty));
   for (const it of items) {
-    const el = h("div", { className: `wlk-item${it.on ? " on" : ""}${it.bad ? " bad" : ""}`, title: "Click to go there", onClick: () => session.goTo(it.pick) },
+    const el = h("div", { className: `wlk-item${it.on ? " on" : ""}${it.bad ? " bad" : ""}`, title: t("Click to go there"), onClick: () => session.goTo(it.pick) },
       it.color ? h("span", { className: "wlk-sw", style: `background:${it.color}` }) : null,
       h("span", { className: "wlk-grow" }, it.label),
       it.hint ? h("span", { className: "wlk-hint" }, it.hint) : null,
@@ -709,11 +716,9 @@ function section(session: Session, openSections: Set<string>, key: string, title
   return det;
 }
 
-const plural = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
-
 /** What the panels say when there is nothing to list. */
 function idleText(session: Session): string {
-  return session.api.document.isOpen() ? "Press Analyse, or switch the overlay on, to read the map." : "Open a map first.";
+  return session.api.document.isOpen() ? t("Press Analyse, or switch the overlay on, to read the map.") : t("Open a map first.");
 }
 
 /** The settings, the readout of the cell under the pointer, and the problems. */
@@ -726,41 +731,42 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
   body.append(root);
 
   const status = h("div", { className: "wlk-status" });
-  const runBtn = W.button("Analyse", { primary: true, onClick: () => void session.run(true) });
-  const shown = W.checkbox("Overlay", { value: session.active, onChange: (v) => { if (v) session.show(); else session.hide(); } });
-  const detailsBtn = W.button("Details…", { title: "Every start location, pair, island, area and choke in a panel of its own", onClick: () => session.openDetails() });
+  const runBtn = W.button(t("Analyse"), { primary: true, onClick: () => void session.run(true) });
+  const shown = W.checkbox(t("Overlay"), { value: session.active, onChange: (v) => { if (v) session.show(); else session.hide(); } });
+  const detailsBtn = W.button(t("Details…"), { title: t("Every start location, pair, island, area and choke in a panel of its own"), onClick: () => session.openDetails() });
   root.append(h("div", { className: "wlk-top" }, runBtn, shown, h("span", { style: "flex:1" }), detailsBtn));
   root.append(status);
 
   const row = (label: string, ...children: Child[]) => h("div", { className: "wlk-row" }, h("label", null, label), h("div", { className: "wlk-in" }, ...children));
   const redraw = () => { session.overlay = null; session.redraw(); };
 
-  const modeSel = W.select(MODES.map((m) => ({ value: m.id, label: m.label })), { value: s.mode, onChange: (v) => { s.mode = v as Mode; session.save(); redraw(); session.notify(); } });
-  root.append(row("Overlay", modeSel));
+  const modeSel = W.select(MODES.map((m) => ({ value: m.id, label: translate(m.label) })), { value: s.mode, onChange: (v) => { s.mode = v as Mode; session.save(); redraw(); session.notify(); } });
+  root.append(row(t("Overlay"), modeSel));
   const tick = (label: string, key: "chokes" | "seams" | "starts" | "labels") => W.checkbox(label, { value: s[key], onChange: (v) => { s[key] = v; session.save(); redraw(); } });
-  root.append(h("div", { className: "wlk-ticks" }, tick("Chokes", "chokes"), tick("Seams", "seams"), tick("Start locations", "starts"), tick("Labels", "labels")));
+  root.append(h("div", { className: "wlk-ticks" }, tick(t("Chokes"), "chokes"), tick(t("Seams"), "seams"), tick(t("Start locations"), "starts"), tick(t("Labels"), "labels")));
   const opacity = h("input", { type: "range", min: 10, max: 100, value: Math.round(s.opacity * 100) });
   opacity.addEventListener("input", () => { s.opacity = Number(opacity.value) / 100; session.save(); session.redraw(); });
-  root.append(row("Opacity", opacity));
+  root.append(row(t("Opacity"), opacity));
 
-  const sizeSel = W.select(UNIT_SIZES.map((u) => ({ value: u.radius, label: u.label })), { value: s.unitRadius, onChange: (v) => { s.unitRadius = Number(v); session.save(); void session.run(); } });
-  root.append(row("Unit size", sizeSel));
+  const sizeSel = W.select(UNIT_SIZES.map((u) => ({ value: u.radius, label: translate(u.label) })), { value: s.unitRadius, onChange: (v) => { s.unitRadius = Number(v); session.save(); void session.run(); } });
+  root.append(row(t("Unit size"), sizeSel));
   const minArea = W.number({ value: s.minArea, min: 1, max: 999, step: 1, onChange: (v) => { s.minArea = Math.max(1, Math.round(v)); session.save(); void session.run(); } });
   const maxChoke = W.number({ value: s.maxChoke, min: 1, max: 64, step: 1, onChange: (v) => { s.maxChoke = Math.max(1, Math.round(v)); session.save(); redraw(); session.notify(); } });
-  root.append(row("Min. area", minArea, h("span", { style: "color:var(--text-dim,#99a2b3)" }, "tiles")));
-  root.append(row("Chokes up to", maxChoke, h("span", { style: "color:var(--text-dim,#99a2b3)" }, "tiles wide")));
-  root.append(W.checkbox("Buildings and resources block the way", { value: s.buildingsBlock, onChange: (v) => { s.buildingsBlock = v; session.save(); void session.run(); } }));
+  root.append(row(t("Min. area"), minArea, h("span", { style: "color:var(--text-dim,#99a2b3)" }, t("tiles"))));
+  root.append(row(t("Chokes up to"), maxChoke, h("span", { style: "color:var(--text-dim,#99a2b3)" }, t("tiles wide"))));
+  root.append(W.checkbox(t("Buildings and resources block the way"), { value: s.buildingsBlock, onChange: (v) => { s.buildingsBlock = v; session.save(); void session.run(); } }));
 
   const under = h("div", { className: "wlk-under" });
-  under.innerHTML = `<span class="wlk-dim">${session.active ? "Move the pointer over the map." : "The overlay is off."}</span>`;
+  under.innerHTML = `<span class="wlk-dim">${session.active ? t("Move the pointer over the map.") : t("The overlay is off.")}</span>`;
   session.underText = (html) => { under.innerHTML = html; };
   root.append(under);
-  const pickBtn = W.button("Pick an area on the map", { ghost: true, onClick: () => void session.pickOnMap() });
+  const pickBtn = W.button(t("Pick an area on the map"), { ghost: true, onClick: () => void session.pickOnMap() });
   root.append(h("div", { className: "wlk-top" }, pickBtn));
 
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
-  root.append(h("div", { className: "wlk-keys" }, "The overlay stays on while you work on any layer and follows every edit; View ▸ Walkability, the Layers panel or ", h("kbd", null, "Ctrl+Shift+W"), " switch it off and on."));
+  const keys = t("The overlay stays on while you work on any layer and follows every edit; View ▸ Walkability, the Layers panel or {key} switch it off and on.").split("{key}");
+  root.append(h("div", { className: "wlk-keys" }, keys[0], h("kbd", null, "Ctrl+Shift+W"), keys[1] ?? ""));
 
   const openSections = new Set<string>(["problems"]);
   let cover: BusyHandle | null = null;
@@ -770,8 +776,8 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
     shown.input.checked = session.active;
     if (session.running) {
       // The last readout stays, dimmed under a note, until the new one replaces it.
-      status.replaceChildren(W.spinner({ size: "sm", label: a ? "Reading the map again…" : "Reading the map…" }));
-      if (results.childElementCount) cover ??= W.busy(results, "Reading…");
+      status.replaceChildren(W.spinner({ size: "sm", label: a ? t("Reading the map again…") : t("Reading the map…") }));
+      if (results.childElementCount) cover ??= W.busy(results, t("Reading…"));
       runBtn.setBusy(true);
       return;
     }
@@ -784,25 +790,26 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
       return;
     }
     const chokes = session.chokes();
-    status.textContent = `${plural(a.components.length, "island")}, ${plural(a.areas.length, "area")}, ${plural(chokes.length, "choke")}, ${plural(a.seams.length, "height seam")} · ${a.took.toFixed(0)} ms${session.stale ? " · out of date" : ""}`;
+    status.textContent = `${t("{islands, plural, one {# island} other {# islands}}, {areas, plural, one {# area} other {# areas}}, {chokes, plural, one {# choke} other {# chokes}}, {seams, plural, one {# height seam} other {# height seams}}",
+      { islands: a.components.length, areas: a.areas.length, chokes: chokes.length, seams: a.seams.length })} · ${a.took.toFixed(0)} ms${session.stale ? ` · ${t("out of date")}` : ""}`;
     const is = (kind: NonNullable<Pick>["kind"], id: number) => session.pick?.kind === kind && session.pick.id === id;
-    const player = (o: number) => api.names.player(o);
+    const player = (o: number) => playerName(o);
 
     const problems: Row[] = [];
     a.starts.forEach((st, i) => {
-      if (st.component < 0) problems.push({ label: `${player(st.owner)}'s start location is not on walkable ground`, bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
-      else if (session.badHalls.has(i)) problems.push({ label: `${player(st.owner)}'s town hall spot is not buildable`, bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
+      if (st.component < 0) problems.push({ label: t("{player}'s start location is not on walkable ground", { player: player(st.owner) }), bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
+      else if (session.badHalls.has(i)) problems.push({ label: t("{player}'s town hall spot is not buildable", { player: player(st.owner) }), bad: true, pick: { kind: "start", id: i }, on: is("start", i) });
     });
     if (a.starts.length > 1) {
       const groups = a.components.filter((c) => c.starts.length);
-      if (groups.length > 1) problems.push({ label: `Start locations are on ${groups.length} different islands`, hint: "no ground route", bad: true, pick: { kind: "island", id: groups[1].id } });
+      if (groups.length > 1) problems.push({ label: t("Start locations are on {n} different islands", { n: groups.length }), hint: t("no ground route"), bad: true, pick: { kind: "island", id: groups[1].id } });
     }
-    a.seams.forEach((sm, i) => problems.push({ label: `Height seam at ${tiles(sm.centre.x)}, ${tiles(sm.centre.y)}: height ${sm.levels[0]} meets ${sm.levels[1]} with no ramp`, hint: `${sm.size} minitiles`, bad: true, pick: { kind: "seam", id: i }, on: is("seam", i) }));
+    a.seams.forEach((sm, i) => problems.push({ label: t("Height seam at {x}, {y}: height {from} meets {to} with no ramp", { x: tiles(sm.centre.x), y: tiles(sm.centre.y), from: sm.levels[0], to: sm.levels[1] }), hint: t("{n} minitiles", { n: sm.size }), bad: true, pick: { kind: "seam", id: i }, on: is("seam", i) }));
     for (const [island, g] of session.strandedByIsland()) {
       if (island >= 0) continue;
-      problems.push({ label: `${g.patches + g.geysers} resource${g.patches + g.geysers === 1 ? "" : "s"} with no walkable ground around them (first: ${g.first.name} at ${pxTiles(g.first.x)}, ${pxTiles(g.first.y)})`, bad: true, pick: null });
+      problems.push({ label: t("{n, plural, one {# resource} other {# resources}} with no walkable ground around them (first: {name} at {x}, {y})", { n: g.patches + g.geysers, name: g.first.name, x: pxTiles(g.first.x), y: pxTiles(g.first.y) }), bad: true, pick: null });
     }
-    results.append(section(session, openSections, "problems", "Problems", problems.length, problems, "None found.", undefined));
+    results.append(section(session, openSections, "problems", t("Problems"), problems.length, problems, t("None found."), undefined));
   }
 
   session.refresh.push(render);
@@ -822,7 +829,7 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
   const root = h("div", { className: "wlk" });
   body.append(root);
   const status = h("div", { className: "wlk-status" });
-  root.append(h("div", { className: "wlk-top" }, status, h("span", { style: "flex:1" }), api.ui.widgets.button("Copy report", { ghost: true, title: "Copy a text summary to the clipboard", onClick: () => session.copyReport() })));
+  root.append(h("div", { className: "wlk-top" }, status, h("span", { style: "flex:1" }), api.ui.widgets.button(t("Copy report"), { ghost: true, title: t("Copy a text summary to the clipboard"), onClick: () => session.copyReport() })));
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
   const openSections = new Set<string>(["starts", "pairs", "stranded"]);
@@ -831,8 +838,8 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
   function render() {
     const a = session.analysis;
     if (session.running) {
-      status.replaceChildren(api.ui.widgets.spinner({ size: "sm", label: "Reading the map…" }));
-      if (results.childElementCount) cover ??= api.ui.widgets.busy(results, "Reading…");
+      status.replaceChildren(api.ui.widgets.spinner({ size: "sm", label: t("Reading the map…") }));
+      if (results.childElementCount) cover ??= api.ui.widgets.busy(results, t("Reading…"));
       return;
     }
     cover?.done();
@@ -842,25 +849,26 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
       status.textContent = idleText(session);
       return;
     }
-    status.textContent = `${MODES.find((m) => m.id === s.mode)?.label ?? ""} · ${a.took.toFixed(0)} ms${session.stale ? " · out of date" : ""}`;
+    const mode = MODES.find((m) => m.id === s.mode);
+    status.textContent = `${mode ? translate(mode.label) : ""} · ${a.took.toFixed(0)} ms${session.stale ? ` · ${t("out of date")}` : ""}`;
     const chokes = session.chokes();
     const is = (kind: NonNullable<Pick>["kind"], id: number) => session.pick?.kind === kind && session.pick.id === id;
-    const player = (o: number) => api.names.player(o);
+    const player = (o: number) => playerName(o);
     const list = (key: string, title: string, count: number, items: Row[], empty: string, warn?: string) => results.append(section(session, openSections, key, title, count, items, empty, warn));
 
-    list("starts", "Start locations", a.starts.length, a.starts.map((st, i) => ({
-      label: `${player(st.owner)} at ${pxTiles(st.x)}, ${pxTiles(st.y)}`,
-      hint: st.component < 0 ? "off the ground" : `island ${st.component + 1} · area ${st.area + 1}`,
+    list("starts", t("Start locations"), a.starts.length, a.starts.map((st, i) => ({
+      label: t("{player} at {x}, {y}", { player: player(st.owner), x: pxTiles(st.x), y: pxTiles(st.y) }),
+      hint: st.component < 0 ? t("off the ground") : t("island {island} · area {area}", { island: st.component + 1, area: st.area + 1 }),
       color: api.palette.playerColor(st.owner),
       bad: st.component < 0 || session.badHalls.has(i),
       on: is("start", i),
       pick: { kind: "start", id: i },
-    })), "The map has no start locations.");
+    })), t("The map has no start locations."));
 
     if (a.starts.length > 1) {
-      list("pairs", "Between start locations", a.pairs.length, a.pairs.map((p, i) => ({
+      list("pairs", t("Between start locations"), a.pairs.length, a.pairs.map((p, i) => ({
         label: `${player(a.starts[p.a].owner)} – ${player(a.starts[p.b].owner)}`,
-        hint: p.ground === null ? `air ${pxTiles(p.air)} · no ground route` : `air ${pxTiles(p.air)} · ground ${pxTiles(p.ground)} · ${tiles(p.bottleneck)} wide`,
+        hint: p.ground === null ? t("air {air} · no ground route", { air: pxTiles(p.air) }) : t("air {air} · ground {ground} · {width} wide", { air: pxTiles(p.air), ground: pxTiles(p.ground), width: tiles(p.bottleneck) }),
         bad: p.ground === null,
         on: is("pair", i),
         pick: { kind: "pair", id: i },
@@ -870,9 +878,9 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
     // Resources no start location reaches by ground: island expansions, or a mistake.
     const offGround = session.strandedByIsland().filter(([island]) => island >= 0);
     if (offGround.length) {
-      list("stranded", "Resources off the main ground", offGround.length, offGround.map(([island, g]) => ({
-        label: `Island ${island + 1}: ${g.patches} patch${g.patches === 1 ? "" : "es"}, ${g.geysers} geyser${g.geysers === 1 ? "" : "s"}`,
-        hint: "no ground route from a start",
+      list("stranded", t("Resources off the main ground"), offGround.length, offGround.map(([island, g]) => ({
+        label: t("Island {n}: {patches, plural, one {# patch} other {# patches}}, {geysers, plural, one {# geyser} other {# geysers}}", { n: island + 1, patches: g.patches, geysers: g.geysers }),
+        hint: t("no ground route from a start"),
         color: rgb(hsl(20 + ((island * 47) % 30), 0.9, 0.5)),
         pick: { kind: "island", id: island } as Pick,
       })), "");
@@ -881,30 +889,30 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
     const specks = s.minPocket * CELLS_PER_TILE * CELLS_PER_TILE;
     const listed = a.components.filter((c) => c.starts.length || c.size >= specks);
     const hidden = a.components.length - listed.length;
-    list("islands", "Islands and pockets", a.components.length, listed.map((c) => ({
-      label: `Island ${c.id + 1}: ${tiles(c.size / CELLS_PER_TILE)} tiles`,
-      hint: c.starts.length ? c.starts.map((i) => player(a.starts[i].owner)).join(", ") : a.starts.length ? "unreachable" : "",
+    list("islands", t("Islands and pockets"), a.components.length, listed.map((c) => ({
+      label: t("Island {n}: {size} tiles", { n: c.id + 1, size: tiles(c.size / CELLS_PER_TILE) }),
+      hint: c.starts.length ? c.starts.map((i) => player(a.starts[i].owner)).join(", ") : a.starts.length ? t("unreachable") : "",
       color: rgb(c.starts.length ? idColor(c.id, 0.8, 0.5) : hsl(20 + ((c.id * 47) % 30), 0.9, 0.5)),
       bad: !c.starts.length && a.starts.length > 0,
       on: is("island", c.id),
       pick: { kind: "island", id: c.id },
-    })), "No walkable ground.", hidden ? `+ ${hidden} under ${s.minPocket} tiles` : undefined);
+    })), t("No walkable ground."), hidden ? t("+ {n} under {size} tiles", { n: hidden, size: s.minPocket }) : undefined);
 
-    list("areas", "Areas", a.areas.length, a.areas.map((ar) => ({
-      label: `Area ${ar.id + 1}: ${tiles(ar.size / CELLS_PER_TILE)} tiles`,
-      hint: `${ar.starts.length ? `${ar.starts.map((i) => player(a.starts[i].owner)).join(", ")} · ` : ""}${ar.chokes.length} choke${ar.chokes.length === 1 ? "" : "s"}`,
+    list("areas", t("Areas"), a.areas.length, a.areas.map((ar) => ({
+      label: t("Area {n}: {size} tiles", { n: ar.id + 1, size: tiles(ar.size / CELLS_PER_TILE) }),
+      hint: `${ar.starts.length ? `${ar.starts.map((i) => player(a.starts[i].owner)).join(", ")} · ` : ""}${t("{n, plural, one {# choke} other {# chokes}}", { n: ar.chokes.length })}`,
       color: rgb(idColor(ar.id)),
       on: is("area", ar.id),
       pick: { kind: "area", id: ar.id },
-    })), "No areas.");
+    })), t("No areas."));
 
-    list("chokes", "Chokes", chokes.length, chokes.map((c) => ({
-      label: `${tiles(c.width)} tiles wide at ${tiles(c.x)}, ${tiles(c.y)}`,
-      hint: `area ${c.a + 1} ↔ ${c.b + 1}`,
+    list("chokes", t("Chokes"), chokes.length, chokes.map((c) => ({
+      label: t("{width} tiles wide at {x}, {y}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y) }),
+      hint: t("area {a} ↔ {b}", { a: c.a + 1, b: c.b + 1 }),
       color: "#ffd166",
       on: is("choke", c.id),
       pick: { kind: "choke", id: c.id },
-    })), `No passage up to ${s.maxChoke} tiles wide between areas.`, a.chokes.length > chokes.length ? `+ ${a.chokes.length - chokes.length} wider` : undefined);
+    })), t("No passage up to {n} tiles wide between areas.", { n: s.maxChoke }), a.chokes.length > chokes.length ? t("+ {n} wider", { n: a.chokes.length - chokes.length }) : undefined);
   }
 
   session.refresh.push(render);
@@ -915,12 +923,15 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
 /* ── activate ───────────────────────────────────────────── */
 
 export default function activate(api: PluginApi) {
+  api.i18n.register({ ko: KO });
+  bindLanguage(api);
   const session = new Session(api);
 
   // The overlay is registered once and lives in the editor's chrome: View ▸ Walkability,
   // the Layers panel. Off to begin with — switching it on reads the map.
   session.view = api.ui.overlay({
-    name: "Walkability",
+    // The name is the overlay's identity (the editor remembers its visibility by it), so it stays English.
+    name: msg("Walkability"),
     visible: false,
     above: "objects",
     draw: (ctx, view) => session.draw(ctx, view),
@@ -928,20 +939,22 @@ export default function activate(api: PluginApi) {
     onToggle: (v) => session.onToggle(v),
   });
 
-  const open = () => {
-    if (session.panel?.isOpen()) { void session.run(true); return; }
+  const openPanel = () => {
     session.panel = api.ui.panel({
-      title: "Walkability",
+      title: t("Walkability"),
       width: 320,
       mount: (body) => mountPanel(session, body),
       onClose: () => { session.panel = null; },
     });
+  };
+  const open = () => {
+    if (!session.panel?.isOpen()) openPanel();
     void session.run(true);
   };
   session.openDetails = () => {
     if (session.details?.isOpen()) return;
     session.details = api.ui.panel({
-      title: "Walkability details",
+      title: t("Walkability details"),
       width: 340,
       mount: (body) => mountDetails(session, body),
       onClose: () => { session.details = null; },
@@ -949,22 +962,30 @@ export default function activate(api: PluginApi) {
     if (!session.analysis || session.stale) void session.run();
   };
   const toggle = () => {
-    if (!api.document.isOpen()) { api.ui.status("Walkability: open a map first"); return; }
+    if (!api.document.isOpen()) { api.ui.status(t("Walkability: open a map first")); return; }
     session.view?.toggle();
   };
 
-  api.commands.register({ id: "open", title: "Walkability…", enabled: () => api.document.isOpen(), run: open });
-  api.commands.register({ id: "toggle", title: "Walkability overlay", enabled: () => api.document.isOpen(), run: toggle });
-  api.commands.register({ id: "details", title: "Walkability details", enabled: () => api.document.isOpen(), run: () => session.openDetails() });
-  api.commands.register({ id: "analyse", title: "Analyse walkability", enabled: () => api.document.isOpen(), run: async () => { await session.run(true); return session.analysis; } });
-  api.commands.register({ id: "copy-report", title: "Copy walkability report", enabled: () => session.analysis !== null, run: () => session.copyReport() });
-  api.menu.add("Tools", { label: "Walkability…", enabled: () => api.document.isOpen(), command: "open" });
-  api.contextMenu.add("viewport", { label: "Walkability overlay", command: "toggle" });
+  // Menu labels and command titles go to the editor in English; it shows them in the reader's language.
+  api.commands.register({ id: "open", title: msg("Walkability…"), enabled: () => api.document.isOpen(), run: open });
+  api.commands.register({ id: "toggle", title: msg("Walkability overlay"), enabled: () => api.document.isOpen(), run: toggle });
+  api.commands.register({ id: "details", title: msg("Walkability details"), enabled: () => api.document.isOpen(), run: () => session.openDetails() });
+  api.commands.register({ id: "analyse", title: msg("Analyse walkability"), enabled: () => api.document.isOpen(), run: async () => { await session.run(true); return session.analysis; } });
+  api.commands.register({ id: "copy-report", title: msg("Copy walkability report"), enabled: () => session.analysis !== null, run: () => session.copyReport() });
+  api.menu.add("Tools", { label: msg("Walkability…"), enabled: () => api.document.isOpen(), command: "open" });
+  api.contextMenu.add("viewport", { label: msg("Walkability overlay"), command: "toggle" });
   api.hotkeys.add("Ctrl+Shift+W", { command: "toggle" });
 
   for (const event of ["terrain", "units", "doodads", "settings"] as const) api.events.on(event, () => session.schedule());
   api.events.on("document", () => {
     if (!api.document.isOpen()) session.clear();
     else session.schedule();
+  });
+  // A new language: the panels are built again in it, and the picture's labels follow on the next draw.
+  api.events.on("language", () => {
+    const reopen = (handle: PanelHandle | null, openIt: () => void) => { if (handle?.isOpen()) { handle.close(); openIt(); } };
+    reopen(session.panel, openPanel);
+    reopen(session.details, session.openDetails);
+    session.redraw();
   });
 }
