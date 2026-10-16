@@ -1,4 +1,4 @@
-// A copy of scm-js/plugin-scm-sim's contract.d.ts at v0.7.0: the `scm-sim.engine` service's types. Types only.
+// A copy of scm-js/plugin-scm-sim's contract.d.ts at v0.8.0: the `scm-sim.engine` service's types. Types only.
 /**
  * The `scm-sim.engine` service, as other plugins see it. Types only: take this file with
  * `import type` and reach the object through `api.services.watch("scm-sim.engine", …)`.
@@ -167,6 +167,95 @@ export interface ScmSimStatus {
    * asked or its page is from before `pathing` (scm-sim 0.7.0).
    */
   pathing: number | null;
+  /**
+   * The `MeasureResult.version` the engine answers `measure` with; null when it could not be
+   * asked or its page is from before `measure` (scm-sim 0.8.0).
+   */
+  measure: number | null;
+}
+
+/* ── A map's measures (`ScmSimService.measure`) ── */
+
+/** A group trial: `count` (1 to 12, one selection) of `unit` walked from `from` to `to`. `id` comes back with the result. */
+export interface MeasureGroup { id?: number; unit: number; count: number; from: PathingPoint; to: PathingPoint }
+/** A base to mine at: its hall's centre, as a start location gives it. */
+export interface MeasureBase { id?: number; hall: PathingPoint }
+
+export interface MeasureGroupResult {
+  /** The id asked with, else the group's place in `groups`. */
+  id?: number;
+  unit: number;
+  count: number;
+  from: PathingPoint;
+  to: PathingPoint;
+  /** How many of the group the game made (fewer when there was not room). */
+  made: number;
+  /**
+   * Frames from the order until the one of the group nearest `to`, walking alone, is through:
+   * two tiles past the middle of the way from `from` to `to` (for a choke's two ends, past the
+   * choke). Timed there and not at `to`, where a group jostles for the one point long after it
+   * is through. Null when it did not get through. 24 frames is a second at Fastest.
+   */
+  alone: number | null;
+  /** The same for the first and the last of the whole group, walking together; null when none got through. The last less `alone` is the time spent queueing. */
+  first: number | null;
+  last: number | null;
+  /**
+   * The frames of each of the group that got through, soonest first. A group in a narrow place
+   * often gets most of the way through quickly and leaves a few stragglers that went round or
+   * waited; the time for most of it (say ten of twelve) says more of the choke than `last`.
+   */
+  times: number[];
+  /** How many of the group got through, and how many stood still ten seconds still meaning to move. */
+  through: number;
+  stuck: number;
+}
+
+export interface MeasureBaseRate {
+  workers: number;
+  /** Minerals taken from the base's own fields in the frames measured, and that per game minute at Fastest. */
+  mined: number;
+  perMinute: number;
+}
+
+export interface MeasureBaseResult {
+  /** The id asked with; a start location's player slot for `starts`. */
+  id?: number;
+  hall: PathingPoint;
+  /** False when the game would not take a Nexus on the spot (then there are no rates). */
+  hallMade: boolean;
+  /** The base's mineral fields (within ten tiles of the hall, nearer it than any other hall measured) and the minerals in them. */
+  fields: number;
+  minerals: number;
+  rates: MeasureBaseRate[];
+}
+
+export interface MeasureResult {
+  version: number;
+  /** Tiles. */
+  map: { width: number; height: number };
+  groups: MeasureGroupResult[];
+  bases: MeasureBaseResult[];
+}
+
+/** `starting`: the engine and the first game; `measuring`: `done` of `total` trials. */
+export interface MeasureProgress { stage: "starting" | "measuring"; done: number; total: number }
+
+export interface MeasureOptions {
+  /** Groups to walk, each against one of them alone, timed as they get through the middle of the way. Groups near each other are run in different games. */
+  groups?: MeasureGroup[];
+  /** Bases to mine at, and `starts` for the base at every start location. */
+  bases?: MeasureBase[];
+  starts?: boolean;
+  /** Worker counts to mine with (default 8, 16, 24; at most 24). */
+  workers?: number[];
+  /** Frames before the minerals are counted (default 600) and the frames they are counted over (default 2,858, two game minutes). */
+  warmup?: number;
+  frames?: number;
+  /** Frames a group trial may take (default 3,000). */
+  limit?: number;
+  signal?: AbortSignal;
+  onProgress?: (progress: MeasureProgress) => void;
 }
 
 /* ── A map's pathing (`ScmSimService.pathing`) ── */
@@ -507,4 +596,15 @@ export interface ScmSimService {
    * (`status().pathing`): check both before offering it.
    */
   pathing?(scenario?: Uint8Array, options?: PathingOptions): Promise<PathingResult>;
+  /**
+   * Measures of a map taken by the game itself: groups of units through chokes against one
+   * unit alone (the time a group spends queueing), and each base's mining per game minute
+   * at several worker counts, read from what goes from its own mineral fields. Gas is not
+   * measured. `scenario` is the bare scenario (`.chk` bytes); left out, the open map.
+   * Nobody plays and the map is not changed. A game for the bases and one for each set of
+   * groups far enough apart, a few seconds each; one request runs at a time. Rejects with an
+   * `Error` worded for the person. Added in 0.8.0, and needs a play page that answers it
+   * (`status().measure`): check both before offering it.
+   */
+  measure?(scenario?: Uint8Array, options?: MeasureOptions): Promise<MeasureResult>;
 }
