@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { KO } from "../ko";
 
 // Every literal the plugin shows through `t("…")` or keeps for later through `msg("…")`, read from the source the way the editor's own extractor reads it.
-const sources = ["plugin.ts", "analysis.ts"].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8"));
+const sources = ["plugin.ts", "analysis.ts", "game.ts"].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8"));
 const keys = new Set(sources.flatMap((source) => [...source.matchAll(/\b(?:t|msg)\("((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string)));
 
 /** The placeholders a string fills: `{name}`, `{n, plural, …}`, `{name|을}` — not the words inside a plural's branches. */

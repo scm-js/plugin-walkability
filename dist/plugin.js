@@ -716,6 +716,81 @@ function report(a, names) {
   return lines.join("\n");
 }
 
+// game.ts
+var GAME_UNITS = [64, 37, 66, 5, 39];
+var FASTEST = 1e3 / 42;
+function seconds(frames) {
+  return (frames / FASTEST).toFixed(1);
+}
+var DETOUR_RATIO = 1.3;
+var DETOUR_MIN_PX = 320;
+function estimatePair(a, ownerA, ownerB) {
+  return a.pairs.find((p) => {
+    const x = a.starts[p.a].owner, y = a.starts[p.b].owner;
+    return x === ownerA && y === ownerB || x === ownerB && y === ownerA;
+  }) ?? null;
+}
+function findings(result, analysis) {
+  const out = [];
+  result.walks.forEach((w, i) => {
+    if (w.outcome === "stopped" || w.outcome === "stuck" || w.outcome === "limit") {
+      out.push({ kind: w.outcome, walk: i });
+      return;
+    }
+    if (w.outcome === "apart") {
+      const pair2 = analysis && w.fromStart !== void 0 && w.toStart !== void 0 ? estimatePair(analysis, w.fromStart, w.toStart) : null;
+      out.push({ kind: "apart", walk: i, estimateHasRoute: pair2 ? pair2.ground !== null : void 0 });
+      return;
+    }
+    if (w.outcome !== "arrived" || !analysis || w.fromStart === void 0 || w.toStart === void 0) return;
+    const pair = estimatePair(analysis, w.fromStart, w.toStart);
+    if (!pair || pair.ground === null) return;
+    const extra = w.travelled - pair.ground;
+    if (w.travelled >= pair.ground * DETOUR_RATIO && extra >= DETOUR_MIN_PX) out.push({ kind: "detour", walk: i, extra });
+  });
+  const rank = { stuck: 0, stopped: 1, limit: 2, apart: 3, detour: 4 };
+  return out.sort((x, y) => rank[x.kind] - rank[y.kind] || x.walk - y.walk);
+}
+function outcomes(walks) {
+  const out = {};
+  for (const w of walks) out[w.outcome] = (out[w.outcome] ?? 0) + 1;
+  return out;
+}
+function describeWalk(w) {
+  const tilesOff = Math.round(w.distance / 32);
+  switch (w.outcome) {
+    case "arrived":
+      return t("{s} s", { s: seconds(w.frames) });
+    case "stopped":
+      return t("stopped {n} tiles short", { n: tilesOff });
+    case "stuck":
+      return t("stuck {n} tiles short", { n: tilesOff });
+    case "limit":
+      return t("still walking after {s} s", { s: seconds(w.frames) });
+    case "apart":
+      return t("no ground between");
+    case "unmoved":
+      return t("did not move");
+  }
+}
+function walkFocus(w) {
+  if (w.outcome !== "arrived" && w.x.length) return { x: w.x[w.x.length - 1], y: w.y[w.y.length - 1] };
+  const mid = Math.floor(w.x.length / 2);
+  return w.x.length ? { x: w.x[mid], y: w.y[mid] } : w.from;
+}
+function unplaced(walks, asked, froms) {
+  const out = [];
+  for (const from of froms) {
+    const there = new Set(walks.filter((w) => w.fromStart === from).map((w) => w.unit));
+    for (const unit of asked) if (!there.has(unit)) out.push(from === void 0 ? { unit } : { unit, fromStart: from });
+  }
+  return out;
+}
+function walkedFrom(result, bothWays) {
+  const slots = result.starts.map((s) => s.owner);
+  return bothWays ? slots : slots.slice(0, -1);
+}
+
 // ko.ts
 var KO = {
   "(minitile {x}, {y})": "(\uBBF8\uB2C8\uD0C0\uC77C {x}, {y})",
@@ -835,7 +910,54 @@ var KO = {
   "{size} minitiles at {x}, {y}: height {from} meets {to}": "{x}, {y}\uC758 \uBBF8\uB2C8\uD0C0\uC77C {size}\uAC1C: \uB192\uC774 {from}\uACFC(\uC640) {to}\uC774(\uAC00) \uB9DE\uB2FF\uC74C",
   "{size} tiles, {chokes, plural, one {# choke} other {# chokes}}": "{size}\uD0C0\uC77C, \uAE38\uBAA9 {chokes}\uAC1C",
   "{width} tiles wide at {x}, {y}": "{x}, {y}\uC758 \uD3ED {width}\uD0C0\uC77C",
-  "{width} tiles wide at {x}, {y} between {a} and {b}": "{a}\uC640(\uACFC) {b} \uC0AC\uC774, {x}, {y}\uC758 \uD3ED {width}\uD0C0\uC77C"
+  "{width} tiles wide at {x}, {y} between {a} and {b}": "{a}\uC640(\uACFC) {b} \uC0AC\uC774, {x}, {y}\uC758 \uD3ED {width}\uD0C0\uC77C",
+  "The game's regions and walks": "\uAC8C\uC784\uC758 \uC9C0\uC5ED\uACFC \uC774\uB3D9",
+  "This needs version 0.7.0 or later of the scm-sim plugin.": "scm-sim \uD50C\uB7EC\uADF8\uC778 0.7.0 \uC774\uC0C1\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.",
+  "The engine's page cannot work out a map's pathing yet. Reload the editor and try again.": "\uC5D4\uC9C4 \uD398\uC774\uC9C0\uAC00 \uC544\uC9C1 \uB9F5\uC758 \uACBD\uB85C\uB97C \uACC4\uC0B0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uD3B8\uC9D1\uAE30\uB97C \uC0C8\uB85C \uACE0\uCE5C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD558\uC138\uC694.",
+  "{x}, {y}": "{x}, {y}",
+  "{unit}: {from} \u2192 {to}": "{unit}: {from} \u2192 {to}",
+  "Click where the units start": "\uC720\uB2DB\uC774 \uCD9C\uBC1C\uD560 \uACF3\uC744 \uD074\uB9AD\uD558\uC138\uC694",
+  "Click where they should walk to": "\uC720\uB2DB\uC774 \uAC78\uC5B4\uAC08 \uACF3\uC744 \uD074\uB9AD\uD558\uC138\uC694",
+  "Walkability: the game walked {n, plural, one {# route} other {# routes}}, {arrived} arrived, {problems, plural, =0 {no problems} one {# problem} other {# problems}}": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uAC8C\uC784\uC774 \uACBD\uB85C {n}\uAC1C\uB97C \uAC78\uC5C8\uC2B5\uB2C8\uB2E4. {arrived}\uAC1C \uB3C4\uCC29, {problems, plural, =0 {\uBB38\uC81C \uC5C6\uC74C} other {\uBB38\uC81C #\uAC1C}}",
+  "Walkability: the game's walk was stopped": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uAC8C\uC784\uC758 \uC774\uB3D9\uC744 \uBA48\uCDC4\uC2B5\uB2C8\uB2E4",
+  "{unit} from {from} to {to} stops short": "{from}\uC5D0\uC11C {to|\uC73C\uB85C} \uAC00\uB294 {unit|\uC774} \uB3C4\uC911\uC5D0 \uBA48\uCDA5\uB2C8\uB2E4",
+  "{unit} from {from} to {to} gets stuck": "{from}\uC5D0\uC11C {to|\uC73C\uB85C} \uAC00\uB294 {unit|\uC774} \uAC07\uD799\uB2C8\uB2E4",
+  "{unit} from {from} to {to} is still walking when the time runs out": "{from}\uC5D0\uC11C {to|\uC73C\uB85C} \uAC00\uB294 {unit|\uC774} \uC2DC\uAC04\uC774 \uB2E4 \uB420 \uB54C\uAE4C\uC9C0 \uAC77\uACE0 \uC788\uC2B5\uB2C8\uB2E4",
+  "The game finds no ground between {from} and {to}, though the estimate does": "\uCD94\uC815\uC73C\uB85C\uB294 \uC9C0\uC0C1 \uACBD\uB85C\uAC00 \uC788\uC9C0\uB9CC, \uAC8C\uC784\uC740 {from|\uACFC} {to} \uC0AC\uC774\uC5D0 \uC9C0\uC0C1 \uACBD\uB85C\uB97C \uCC3E\uC9C0 \uBABB\uD569\uB2C8\uB2E4",
+  "No ground between {from} and {to}": "{from|\uACFC} {to} \uC0AC\uC774\uC5D0 \uC9C0\uC0C1 \uACBD\uB85C \uC5C6\uC74C",
+  "{unit} from {from} to {to} walks {n} tiles more than the shortest ground route": "{from}\uC5D0\uC11C {to|\uC73C\uB85C} \uAC00\uB294 {unit|\uC774} \uAC00\uC7A5 \uC9E7\uC740 \uC9C0\uC0C1 \uACBD\uB85C\uBCF4\uB2E4 {n}\uD0C0\uC77C \uB354 \uAC77\uC2B5\uB2C8\uB2E4",
+  "The game's own pathing": "\uAC8C\uC784 \uC790\uCCB4\uC758 \uACBD\uB85C \uD0D0\uC0C9",
+  "{n, plural, one {# walkable region} other {# walkable regions}} of {all}": "\uC9C0\uC5ED {all}\uAC1C \uC911 \uAC78\uC744 \uC218 \uC788\uB294 \uC9C0\uC5ED {n}\uAC1C",
+  "What the game found": "\uAC8C\uC784\uC774 \uCC3E\uC740 \uAC83",
+  "the map was edited after the game walked it": "\uAC8C\uC784\uC774 \uAC78\uC740 \uB4A4 \uB9F5\uC774 \uD3B8\uC9D1\uB428",
+  "the game's region {r}, ground group {g}": "\uAC8C\uC784\uC758 \uC9C0\uC5ED {r}, \uC9C0\uC0C1 \uADF8\uB8F9 {g}",
+  "the game's region {r}, unwalkable": "\uAC8C\uC784\uC758 \uC9C0\uC5ED {r}, \uAC78\uC744 \uC218 \uC5C6\uC74C",
+  "The game's engine is not available here.": "\uC5EC\uAE30\uC11C\uB294 \uAC8C\uC784 \uC5D4\uC9C4\uC744 \uC4F8 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "Asking the game's engine\u2026": "\uAC8C\uC784 \uC5D4\uC9C4\uC5D0 \uBB3B\uB294 \uC911\u2026",
+  "The game itself walks units between the start locations, with its own regions and pathfinding. Each start location walked from takes a few seconds.": "\uAC8C\uC784\uC774 \uC9C1\uC811 \uC790\uCCB4 \uC9C0\uC5ED\uACFC \uACBD\uB85C \uD0D0\uC0C9\uC73C\uB85C \uC2DC\uC791 \uC704\uCE58 \uC0AC\uC774\uC5D0 \uC720\uB2DB\uC744 \uAC77\uAC8C \uD569\uB2C8\uB2E4. \uCD9C\uBC1C\uD558\uB294 \uC2DC\uC791 \uC704\uCE58\uB9C8\uB2E4 \uBA87 \uCD08\uAC00 \uAC78\uB9BD\uB2C8\uB2E4.",
+  "Both ways": "\uC591\uBC29\uD5A5",
+  "Walk from each start location to each other one, not each pair once": "\uAC01 \uC30D\uC744 \uD55C \uBC88\uC529\uC774 \uC544\uB2C8\uB77C, \uAC01 \uC2DC\uC791 \uC704\uCE58\uC5D0\uC11C \uB2E4\uB978 \uBAA8\uB4E0 \uC2DC\uC791 \uC704\uCE58\uB85C \uAC77\uC2B5\uB2C8\uB2E4",
+  "Walk the map": "\uB9F5 \uAC78\uC5B4 \uBCF4\uAE30",
+  "Walk between two points": "\uB450 \uC9C0\uC810 \uC0AC\uC774 \uAC77\uAE30",
+  "Stop": "\uBA48\uCDA4",
+  "Walking {done} of {total}\u2026": "{total}\uAC1C \uC911 {done}\uAC1C \uAC77\uB294 \uC911\u2026",
+  "Starting the game\u2026": "\uAC8C\uC784\uC744 \uC2DC\uC791\uD558\uB294 \uC911\u2026",
+  "{n, plural, one {# walkable region} other {# walkable regions}}": "\uAC78\uC744 \uC218 \uC788\uB294 \uC9C0\uC5ED {n}\uAC1C",
+  "{n, plural, one {# walk} other {# walks}}, {arrived} arrived": "\uC774\uB3D9 {n}\uAC1C, {arrived}\uAC1C \uB3C4\uCC29",
+  "Show": "\uBCF4\uAE30",
+  "Show the game's regions and walks on the map": "\uAC8C\uC784\uC758 \uC9C0\uC5ED\uACFC \uC774\uB3D9\uC744 \uB9F5\uC5D0 \uD45C\uC2DC\uD569\uB2C8\uB2E4",
+  "Every walk arrived, by routes close to the shortest.": "\uBAA8\uB4E0 \uC774\uB3D9\uC774 \uAC00\uC7A5 \uC9E7\uC740 \uACBD\uB85C\uC5D0 \uAC00\uAE5D\uAC8C \uB3C4\uCC29\uD588\uC2B5\uB2C8\uB2E4.",
+  "The game's walks": "\uAC8C\uC784\uC758 \uC774\uB3D9",
+  "{n} tiles": "{n}\uD0C0\uC77C",
+  "{s} s": "{s}\uCD08",
+  "stopped {n} tiles short": "{n}\uD0C0\uC77C \uC55E\uC5D0\uC11C \uBA48\uCDA4",
+  "stuck {n} tiles short": "{n}\uD0C0\uC77C \uC55E\uC5D0\uC11C \uAC07\uD798",
+  "still walking after {s} s": "{s}\uCD08 \uB4A4\uC5D0\uB3C4 \uAC77\uB294 \uC911",
+  "no ground between": "\uC9C0\uC0C1 \uACBD\uB85C \uC5C6\uC74C",
+  "did not move": "\uC6C0\uC9C1\uC774\uC9C0 \uC54A\uC74C",
+  "The game could not place a {unit} at the point picked": "\uAC8C\uC784\uC774 \uACE0\uB978 \uC9C0\uC810\uC5D0 {unit|\uC744} \uB193\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "The game could not place a {unit} near {from}'s start location, so it walked nothing from there": "\uAC8C\uC784\uC774 {from}\uC758 \uC2DC\uC791 \uC704\uCE58 \uADFC\uCC98\uC5D0 {unit|\uC744} \uB193\uC9C0 \uBABB\uD574 \uADF8\uACF3\uC5D0\uC11C\uB294 \uC544\uBB34\uAC83\uB3C4 \uAC77\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4",
+  "not placed": "\uB193\uC9C0 \uBABB\uD568"
 };
 
 // plugin.ts
@@ -884,13 +1006,17 @@ var STYLE = `
 .wlk .wlk-empty { padding: 4px 8px; color: var(--text-faint, #6b7382); }
 .wlk .wlk-keys { color: var(--text-faint, #6b7382); font-size: 11px; line-height: 1.4; }
 .wlk .wlk-keys kbd { font-family: inherit; color: var(--text-dim, #99a2b3); }
+.wlk .wlk-game { display: flex; flex-direction: column; gap: 6px; }
+.wlk .wlk-game:empty { display: none; }
+.wlk .wlk-h { font-weight: 600; color: var(--text, #e6e9ef); border-top: 1px solid var(--border, #333); padding-top: 7px; }
 `;
 var MODES = [
   { id: "areas", label: msg("Areas and chokes") },
   { id: "islands", label: msg("Islands and pockets") },
   { id: "clearance", label: msg("Clearance (room to move)") },
   { id: "height", label: msg("Ground height and seams") },
-  { id: "walk", label: msg("Walkable ground") }
+  { id: "walk", label: msg("Walkable ground") },
+  { id: "game", label: msg("The game's regions and walks") }
 ];
 var UNIT_SIZES = [
   { radius: 0, label: msg("Ground as flagged") },
@@ -898,11 +1024,13 @@ var UNIT_SIZES = [
   { radius: 2, label: msg("Medium units (Dragoon, Hydralisk)") },
   { radius: 3, label: msg("Large units (Siege Tank, Ultralisk)") }
 ];
-var DEFAULTS = { mode: "areas", chokes: true, seams: true, starts: true, labels: true, opacity: 0.45, unitRadius: 1, buildingsBlock: true, minArea: 24, minPocket: 2, maxChoke: 12 };
+var DEFAULTS = { mode: "areas", chokes: true, seams: true, starts: true, labels: true, opacity: 0.45, unitRadius: 1, buildingsBlock: true, minArea: 24, minPocket: 2, maxChoke: 12, gameUnits: [...GAME_UNITS], gameBothWays: false };
 function loadSettings(api) {
   const stored = api.storage.get("settings", {});
   const s = { ...DEFAULTS, ...stored };
   if (!MODES.some((m) => m.id === s.mode)) s.mode = DEFAULTS.mode;
+  if (!Array.isArray(s.gameUnits)) s.gameUnits = [...DEFAULTS.gameUnits];
+  s.gameUnits = s.gameUnits.filter((u) => GAME_UNITS.includes(u));
   return s;
 }
 function hsl(hue, s, l) {
@@ -926,6 +1054,8 @@ var playerName = (slot) => t("Player {n}", { n: slot + 1 });
 var RED = [255, 80, 70];
 var GREY = [40, 40, 48];
 var LEVELS = [[70, 120, 255], [80, 200, 120], [250, 210, 90]];
+var UNIT_COLORS = [[240, 240, 240], [255, 214, 10], [40, 200, 255], [255, 140, 30], [255, 70, 210]];
+var unitColor = (unit) => UNIT_COLORS[GAME_UNITS.indexOf(unit)] ?? [240, 240, 240];
 var Session = class {
   settings;
   panel = null;
@@ -950,6 +1080,9 @@ var Session = class {
   timer = null;
   /** A run is under way: the panels show it (a ring in the status, the last results dimmed under a note). */
   running = false;
+  game = { service: null, usable: null, reason: null, result: null, doc: null, stale: false, findings: [], custom: [], unplaced: [], customUnplaced: [], running: null, error: null };
+  /** The game's regions as a picture, a pixel a minitile. */
+  regions = null;
   api;
   constructor(api) {
     this.api = api;
@@ -1066,6 +1199,7 @@ var Session = class {
           this.stranded.push({ index, name: api.palette.unitName(u.unitId), x: u.x, y: u.y, island, geyser: u.unitId === GEYSER });
         });
       }
+      if (this.game.result) this.game.findings = findings(this.game.result, a);
       if (this.pick && !this.pickStillValid()) this.pick = null;
       this.overlay = null;
       this.highlight = null;
@@ -1101,6 +1235,10 @@ var Session = class {
         return p.id < a.starts.length;
       case "pair":
         return p.id < a.pairs.length;
+      case "walk":
+        return p.id < (this.game.result?.walks.length ?? 0);
+      case "custom":
+        return p.id < this.game.custom.length;
     }
   }
   clear() {
@@ -1113,6 +1251,191 @@ var Session = class {
     this.stale = false;
     this.redraw();
     this.notify();
+  }
+  /* ── the game's own pathing (the scm-sim plugin's engine) ── */
+  /** The engine came or went (the scm-sim plugin was switched on or off, or updated). */
+  setService(service) {
+    this.game.service = service;
+    this.game.usable = null;
+    this.game.reason = null;
+    if (this.panel?.isOpen()) void this.checkGame();
+    this.notify();
+  }
+  /** Ask the engine whether it can walk a map here. */
+  async checkGame() {
+    const sim = this.game.service;
+    if (!sim || !sim.present) {
+      this.game.usable = false;
+      this.game.reason = null;
+      this.notify();
+      return;
+    }
+    if (typeof sim.pathing !== "function") {
+      this.game.usable = false;
+      this.game.reason = t("This needs version 0.7.0 or later of the scm-sim plugin.");
+      this.notify();
+      return;
+    }
+    const status = await sim.status();
+    this.game.usable = status.available && status.pathing !== null;
+    this.game.reason = !status.available ? status.reason : status.pathing === null ? t("The engine's page cannot work out a map's pathing yet. Reload the editor and try again.") : null;
+    this.notify();
+  }
+  /** A unit's name as the editor gives it. */
+  unitName(unit) {
+    return this.api.palette.unitName(unit);
+  }
+  /** Where a walk went between, in words: the two start locations' players, or two tiles. */
+  walkLabel(w) {
+    const end = (slot, p) => slot !== void 0 ? playerName(slot) : t("{x}, {y}", { x: pxTiles(p.x), y: pxTiles(p.y) });
+    return t("{unit}: {from} \u2192 {to}", { unit: this.unitName(w.unit), from: end(w.fromStart, w.from), to: end(w.toStart, w.to) });
+  }
+  /** Have the game walk the map: the ticked units between every pair of start locations. */
+  async walkMap() {
+    await this.walkGame("map");
+  }
+  /** Have the game walk the ticked units between two tiles the person clicks. */
+  async walkPoints() {
+    const from = await this.api.ui.pickTile({ prompt: t("Click where the units start") });
+    if (!from) return;
+    const to = await this.api.ui.pickTile({ prompt: t("Click where they should walk to") });
+    if (!to) return;
+    const centre = (p) => ({ x: p.x * 32 + 16, y: p.y * 32 + 16 });
+    await this.walkGame("points", centre(from), centre(to));
+  }
+  async walkGame(what, from, to) {
+    const sim = this.game.service;
+    if (!sim?.pathing || this.game.running) return;
+    if (!this.api.document.isOpen()) {
+      this.api.ui.status(t("Walkability: open a map first"));
+      return;
+    }
+    const units = this.settings.gameUnits.length ? this.settings.gameUnits : [...GAME_UNITS];
+    const stop = new AbortController();
+    const running = { done: 0, total: 0, stop, what };
+    this.game.running = running;
+    this.game.error = null;
+    this.notify();
+    try {
+      const options = { units, signal: stop.signal, onProgress: (p) => {
+        running.done = p.done;
+        running.total = p.total;
+        this.notify();
+      } };
+      if (what === "map") {
+        if (!this.analysis || this.stale) await this.run();
+        const result = await sim.pathing(void 0, { ...options, directed: this.settings.gameBothWays });
+        this.game.result = result;
+        this.game.doc = this.api.document.id();
+        this.game.stale = false;
+        this.game.findings = findings(result, this.analysis);
+        this.game.unplaced = unplaced(result.walks, units, walkedFrom(result, this.settings.gameBothWays));
+        this.regions = null;
+        if (this.pick?.kind === "walk") this.pick = null;
+        const n = outcomes(result.walks);
+        this.api.ui.status(t(
+          "Walkability: the game walked {n, plural, one {# route} other {# routes}}, {arrived} arrived, {problems, plural, =0 {no problems} one {# problem} other {# problems}}",
+          { n: result.walks.length, arrived: n.arrived ?? 0, problems: this.game.findings.length }
+        ));
+        if (this.settings.mode !== "game") {
+          this.settings.mode = "game";
+          this.save();
+          this.overlay = null;
+        }
+        if (!this.active) this.show();
+      } else {
+        const result = await sim.pathing(void 0, { ...options, from, to: [to], regions: false });
+        this.game.custom = result.walks;
+        this.game.customUnplaced = unplaced(result.walks, units, [void 0]).map((u) => u.unit);
+        if (this.game.doc === null) this.game.doc = this.api.document.id();
+        this.select(result.walks.length ? { kind: "custom", id: 0 } : null);
+        if (!this.active) this.show();
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") this.api.ui.status(t("Walkability: the game's walk was stopped"));
+      else this.game.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.game.running = null;
+      this.redraw();
+      this.notify();
+    }
+  }
+  stopGame() {
+    this.game.running?.stop.abort();
+  }
+  /** The map was edited: the game's walks are of the map as it was. */
+  gameEdited() {
+    if (!this.game.result && !this.game.custom.length) return;
+    if (!this.game.stale) {
+      this.game.stale = true;
+      this.notify();
+    }
+  }
+  /** Another map is in front, or none: the walks were of the one before. */
+  clearGame() {
+    this.game.running?.stop.abort();
+    this.game.result = null;
+    this.game.custom = [];
+    this.game.findings = [];
+    this.game.unplaced = [];
+    this.game.customUnplaced = [];
+    this.game.doc = null;
+    this.game.stale = false;
+    this.game.error = null;
+    this.regions = null;
+    if (this.pick?.kind === "walk" || this.pick?.kind === "custom") this.pick = null;
+    if (this.settings.mode === "game") this.overlay = null;
+    this.redraw();
+    this.notify();
+  }
+  /** A finding in words, for the panel's list and the report. */
+  findingText(f) {
+    const w = this.game.result.walks[f.walk];
+    const between = { unit: this.unitName(w.unit), from: w.fromStart !== void 0 ? playerName(w.fromStart) : "?", to: w.toStart !== void 0 ? playerName(w.toStart) : "?" };
+    switch (f.kind) {
+      case "stopped":
+        return { label: t("{unit} from {from} to {to} stops short", between), hint: describeWalk(w) };
+      case "stuck":
+        return { label: t("{unit} from {from} to {to} gets stuck", between), hint: describeWalk(w) };
+      case "limit":
+        return { label: t("{unit} from {from} to {to} is still walking when the time runs out", between), hint: describeWalk(w) };
+      case "apart":
+        return {
+          label: f.estimateHasRoute ? t("The game finds no ground between {from} and {to}, though the estimate does", between) : t("No ground between {from} and {to}", between),
+          hint: this.unitName(w.unit)
+        };
+      case "detour":
+        return { label: t("{unit} from {from} to {to} walks {n} tiles more than the shortest ground route", { ...between, n: Math.round((f.extra ?? 0) / 32) }), hint: describeWalk(w) };
+    }
+  }
+  /** A unit the game left out of the walks from a start location, in words. */
+  unplacedText(u) {
+    return t("The game could not place a {unit} near {from}'s start location, so it walked nothing from there", { unit: this.unitName(u.unit), from: playerName(u.fromStart ?? 0) });
+  }
+  /** The game's walks as lines of text, for the report. */
+  gameReport() {
+    const g = this.game.result;
+    if (!g && !this.game.custom.length) return [];
+    const lines = ["", t("The game's own pathing")];
+    if (g) {
+      if (g.regions) lines.push(`  ${t("{n, plural, one {# walkable region} other {# walkable regions}} of {all}", { n: g.regions.walkable.reduce((n, w) => n + w, 0), all: g.regions.count })}`);
+      for (const w of g.walks) lines.push(`  ${this.walkLabel(w)}: ${describeWalk(w)}`);
+      if (this.game.findings.length || this.game.unplaced.length) {
+        lines.push("", t("What the game found"));
+        for (const u of this.game.unplaced) lines.push(`  ${this.unplacedText(u)}`);
+        for (const f of this.game.findings) lines.push(`  ${this.findingText(f).label}`);
+      }
+    }
+    for (const w of this.game.custom) lines.push(`  ${this.walkLabel(w)}: ${describeWalk(w)}`);
+    for (const u of this.game.customUnplaced) lines.push(`  ${t("The game could not place a {unit} at the point picked", { unit: this.unitName(u) })}`);
+    if (this.game.stale) lines.push(`  (${t("the map was edited after the game walked it")})`);
+    return lines;
+  }
+  /** The walk a pick names. */
+  walkOf(pick) {
+    if (pick?.kind === "walk") return this.game.result?.walks[pick.id] ?? null;
+    if (pick?.kind === "custom") return this.game.custom[pick.id] ?? null;
+    return null;
   }
   /* ── the overlay: the picture and the readout ── */
   show() {
@@ -1209,6 +1532,15 @@ var Session = class {
         else this.api.view.goTo({ kind: "unit", index: a.starts[p.a].index });
         break;
       }
+      case "walk":
+      case "custom": {
+        const w = this.walkOf(pick);
+        if (w) {
+          const f = walkFocus(w);
+          this.api.view.center(Math.floor(f.x / 32), Math.floor(f.y / 32));
+        }
+        break;
+      }
     }
     if (!this.active) this.show();
     this.select(pick);
@@ -1236,6 +1568,11 @@ var Session = class {
     if (area >= 0) {
       const ar = a.areas[area];
       parts.push(`${t("Area {n}", { n: area + 1 })} <span class="wlk-dim">(${t("{size} tiles, {chokes, plural, one {# choke} other {# chokes}}", { size: tiles(ar.size / CELLS_PER_TILE), chokes: ar.chokes.length })})</span>`);
+    }
+    const g = this.game.result?.regions;
+    if (g && this.settings.mode === "game" && x < g.width && y < g.height) {
+      const r = g.grid[y * g.width + x];
+      parts.push(g.walkable[r] ? t("the game's region {r}, ground group {g}", { r, g: g.group[r] }) : t("the game's region {r}, unwalkable", { r }));
     }
     return parts.join(" \xB7 ");
   }
@@ -1309,6 +1646,37 @@ var Session = class {
     ctx.putImageData(img, 0, 0);
     return canvas;
   }
+  /** The game's regions, a pixel a minitile: each walkable region its own colour, darker at its edges; unwalkable ground clear. */
+  buildRegions() {
+    const g = this.game.result?.regions;
+    if (!g) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = g.width;
+    canvas.height = g.height;
+    const ctx = canvas.getContext("2d");
+    const img = ctx.createImageData(g.width, g.height);
+    const d = img.data;
+    const colors = /* @__PURE__ */ new Map();
+    for (let y = 0; y < g.height; y++) {
+      for (let x = 0; x < g.width; x++) {
+        const i = y * g.width + x, r = g.grid[i];
+        if (!g.walkable[r]) continue;
+        let c = colors.get(r);
+        if (!c) {
+          c = idColor(r, 0.6, 0.5);
+          colors.set(r, c);
+        }
+        const edge = x > 0 && g.grid[i - 1] !== r || y > 0 && g.grid[i - g.width] !== r || x + 1 < g.width && g.grid[i + 1] !== r || y + 1 < g.height && g.grid[i + g.width] !== r;
+        const k = edge ? 0.45 : 1;
+        d[i * 4] = c[0] * k;
+        d[i * 4 + 1] = c[1] * k;
+        d[i * 4 + 2] = c[2] * k;
+        d[i * 4 + 3] = edge ? 235 : 150;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
   buildHighlight() {
     const a = this.analysis;
     const p = this.pick;
@@ -1343,11 +1711,11 @@ var Session = class {
     if (x1 <= x0 || y1 <= y0) return;
     const dx = view.x(x0 * CELL_PX);
     const dy = view.y(y0 * CELL_PX);
-    this.overlay ??= this.buildOverlay();
+    const picture = this.settings.mode === "game" ? this.regions ??= this.buildRegions() : this.overlay ??= this.buildOverlay();
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = this.settings.opacity;
-    ctx.drawImage(this.overlay, x0, y0, x1 - x0, y1 - y0, dx, dy, (x1 - x0) * cellPx, (y1 - y0) * cellPx);
+    if (picture) ctx.drawImage(picture, x0, y0, x1 - x0, y1 - y0, dx, dy, (x1 - x0) * cellPx, (y1 - y0) * cellPx);
     if (this.pick) {
       this.highlight ??= this.buildHighlight();
       if (this.highlight) {
@@ -1441,11 +1809,65 @@ var Session = class {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+    this.drawWalks(ctx, view, showLabels, label);
     if (this.hover) {
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 1;
       ctx.strokeRect(Math.round(view.x(this.hover.x * CELL_PX)) + 0.5, Math.round(view.y(this.hover.y * CELL_PX)) + 0.5, Math.max(1, Math.round(cellPx) - 1), Math.max(1, Math.round(cellPx) - 1));
     }
+  }
+  /**
+   * The game's walks: all of them in the game's view, else only a picked one; the person's own
+   * walks always. A route in its unit's colour, a picked one on top in a white casing, and a
+   * cross where a walk that went wrong ended.
+   */
+  drawWalks(ctx, view, showLabels, label) {
+    const walks = [];
+    const isPicked = (kind, i) => this.pick?.kind === kind && this.pick.id === i;
+    if (this.settings.mode === "game") (this.game.result?.walks ?? []).forEach((w, i) => walks.push({ w, picked: isPicked("walk", i) }));
+    else if (this.pick?.kind === "walk") {
+      const w = this.walkOf(this.pick);
+      if (w) walks.push({ w, picked: true });
+    }
+    this.game.custom.forEach((w, i) => walks.push({ w, picked: isPicked("custom", i) }));
+    if (!walks.length) return;
+    walks.sort((p, q) => Number(p.picked) - Number(q.picked));
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (const { w, picked } of walks) {
+      if (w.x.length < 2) continue;
+      const path = () => {
+        ctx.beginPath();
+        ctx.moveTo(view.x(w.x[0]), view.y(w.y[0]));
+        for (let k = 1; k < w.x.length; k++) ctx.lineTo(view.x(w.x[k]), view.y(w.y[k]));
+      };
+      if (picked) {
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 6;
+        path();
+        ctx.stroke();
+      }
+      ctx.strokeStyle = rgb(unitColor(w.unit));
+      ctx.lineWidth = picked ? 3 : 1.5;
+      ctx.globalAlpha = picked || walks.length < 12 ? 1 : 0.8;
+      path();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (w.outcome !== "arrived") {
+        const ex = view.x(w.x[w.x.length - 1]), ey = view.y(w.y[w.y.length - 1]), r = Math.max(5, view.tilePx * 0.6);
+        ctx.strokeStyle = "#ff5a4a";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(ex - r, ey - r);
+        ctx.lineTo(ex + r, ey + r);
+        ctx.moveTo(ex + r, ey - r);
+        ctx.lineTo(ex - r, ey + r);
+        ctx.stroke();
+        if (showLabels && picked) label(`${this.unitName(w.unit)}: ${describeWalk(w)}`, ex, ey - r - 10, "#ff8a7a");
+      }
+    }
+    ctx.restore();
   }
   /** Stranded resources grouped by island, largest island first (-1 last). */
   strandedByIsland() {
@@ -1468,10 +1890,11 @@ var Session = class {
       const counts = { patches: group.patches, geysers: group.geysers };
       extra.push(`  ${island < 0 ? t("{patches, plural, one {# mineral field} other {# mineral fields}} and {geysers, plural, one {# geyser} other {# geysers}} with no walkable ground around them: no start location reaches them by ground", counts) : t("{patches, plural, one {# mineral field} other {# mineral fields}} and {geysers, plural, one {# geyser} other {# geysers}} on island {n}: no start location reaches them by ground", { ...counts, n: island + 1 })}`);
     }
-    const full = extra.length ? `${text}
+    const full = (extra.length ? `${text}
 
 ${t("Problems")}
-${extra.join("\n")}` : text;
+${extra.join("\n")}` : text) + this.gameReport().map((l) => `
+${l}`).join("");
     void navigator.clipboard?.writeText(full).then(
       () => this.api.ui.status(t("Walkability: report copied")),
       () => this.api.ui.status(t("Walkability: the browser refused the clipboard"))
@@ -1582,13 +2005,99 @@ function mountPanel(session, body) {
   root.append(h("div", { className: "wlk-top" }, pickBtn));
   const results = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
   root.append(results);
+  const gameBox = h("div", { className: "wlk-game" });
+  root.append(gameBox);
   const keys = t("The overlay stays on while you work on any layer and follows every edit; View \u25B8 Walkability, the Layers panel or {key} switch it off and on.").split("{key}");
   root.append(h("div", { className: "wlk-keys" }, keys[0], h("kbd", null, "Ctrl+Shift+W"), keys[1] ?? ""));
-  const openSections = /* @__PURE__ */ new Set(["problems"]);
+  const openSections = /* @__PURE__ */ new Set(["problems", "game"]);
   let cover = null;
+  if (session.game.service && session.game.usable === null) void session.checkGame();
+  function renderGame() {
+    const g = session.game;
+    gameBox.replaceChildren();
+    if (!g.service?.present) return;
+    gameBox.append(h("div", { className: "wlk-h" }, t("The game's own pathing")));
+    if (g.usable === false) {
+      gameBox.append(h("div", { className: "wlk-status" }, g.reason ?? t("The game's engine is not available here.")));
+      return;
+    }
+    if (g.usable === null) {
+      gameBox.append(W.spinner({ size: "sm", label: t("Asking the game's engine\u2026") }));
+      return;
+    }
+    gameBox.append(h("div", { className: "wlk-status" }, t("The game itself walks units between the start locations, with its own regions and pathfinding. Each start location walked from takes a few seconds.")));
+    const ticks = h("div", { className: "wlk-ticks" });
+    for (const unit of GAME_UNITS) {
+      ticks.append(W.checkbox(session.unitName(unit), {
+        value: s.gameUnits.includes(unit),
+        onChange: (v) => {
+          s.gameUnits = GAME_UNITS.filter((u) => u === unit ? v : s.gameUnits.includes(u));
+          session.save();
+        }
+      }));
+    }
+    ticks.append(W.checkbox(t("Both ways"), { value: s.gameBothWays, title: t("Walk from each start location to each other one, not each pair once"), onChange: (v) => {
+      s.gameBothWays = v;
+      session.save();
+    } }));
+    gameBox.append(ticks);
+    const running = g.running;
+    const walkBtn = W.button(t("Walk the map"), { primary: true, disabled: running !== null, onClick: () => void session.walkMap() });
+    const pointsBtn = W.button(t("Walk between two points"), { ghost: true, disabled: running !== null, onClick: () => void session.walkPoints() });
+    gameBox.append(h("div", { className: "wlk-top" }, walkBtn, pointsBtn, running ? W.button(t("Stop"), { ghost: true, onClick: () => session.stopGame() }) : null));
+    if (running) {
+      gameBox.append(W.spinner({ size: "sm", label: running.total ? t("Walking {done} of {total}\u2026", { done: running.done, total: running.total }) : t("Starting the game\u2026") }));
+      return;
+    }
+    if (g.error) gameBox.append(h("div", { className: "wlk-status", style: "color:#ff9f7a" }, g.error));
+    const r = g.result;
+    if (r) {
+      const n = outcomes(r.walks);
+      const regions = r.regions ? r.regions.walkable.reduce((k, w) => k + w, 0) : null;
+      const line = [
+        regions !== null ? t("{n, plural, one {# walkable region} other {# walkable regions}}", { n: regions }) : null,
+        t("{n, plural, one {# walk} other {# walks}}, {arrived} arrived", { n: r.walks.length, arrived: n.arrived ?? 0 }),
+        g.stale ? t("out of date") : null
+      ].filter(Boolean).join(" \xB7 ");
+      const showBtn = s.mode === "game" ? null : W.button(t("Show"), { ghost: true, title: t("Show the game's regions and walks on the map"), onClick: () => {
+        s.mode = "game";
+        session.save();
+        session.overlay = null;
+        session.show();
+        session.redraw();
+        session.notify();
+      } });
+      gameBox.append(h("div", { className: "wlk-top" }, h("span", { className: "wlk-status", style: "flex:1" }, line), showBtn));
+      const is = (i) => session.pick?.kind === "walk" && session.pick.id === i;
+      const startPick = (slot) => {
+        const i = session.analysis?.starts.findIndex((st) => st.owner === slot) ?? -1;
+        return i >= 0 ? { kind: "start", id: i } : null;
+      };
+      const rows = [
+        ...g.unplaced.map((u) => ({ label: session.unplacedText(u), hint: t("not placed"), bad: true, color: rgb(unitColor(u.unit)), pick: startPick(u.fromStart) })),
+        ...g.findings.map((f) => ({ ...session.findingText(f), bad: f.kind !== "detour", color: rgb(unitColor(r.walks[f.walk].unit)), on: is(f.walk), pick: { kind: "walk", id: f.walk } }))
+      ];
+      gameBox.append(section(session, openSections, "game", t("What the game found"), rows.length, rows, t("Every walk arrived, by routes close to the shortest."), void 0));
+    }
+    g.custom.forEach((w, i) => {
+      const on = session.pick?.kind === "custom" && session.pick.id === i;
+      gameBox.append(h(
+        "div",
+        { className: `wlk-item${on ? " on" : ""}${w.outcome !== "arrived" ? " bad" : ""}`, onClick: () => session.goTo({ kind: "custom", id: i }) },
+        h("span", { className: "wlk-sw", style: `background:${rgb(unitColor(w.unit))}` }),
+        h("span", { className: "wlk-grow" }, session.walkLabel(w)),
+        h("span", { className: "wlk-hint" }, describeWalk(w))
+      ));
+    });
+    for (const u of g.customUnplaced) {
+      gameBox.append(h("div", { className: "wlk-status", style: "color:#ff9f7a" }, t("The game could not place a {unit} at the point picked", { unit: session.unitName(u) })));
+    }
+  }
   function render() {
+    renderGame();
     const a = session.analysis;
     shown.input.checked = session.active;
+    modeSel.value = s.mode;
     if (session.running) {
       status.replaceChildren(W.spinner({ size: "sm", label: a ? t("Reading the map again\u2026") : t("Reading the map\u2026") }));
       if (results.childElementCount) cover ??= W.busy(results, t("Reading\u2026"));
@@ -1710,6 +2219,17 @@ function mountDetails(session, body) {
       on: is("area", ar.id),
       pick: { kind: "area", id: ar.id }
     })), t("No areas."));
+    const game = session.game.result;
+    if (game?.walks.length) {
+      list("walks", t("The game's walks"), game.walks.length, game.walks.map((w, i) => ({
+        label: session.walkLabel(w),
+        hint: `${describeWalk(w)}${w.outcome === "arrived" ? ` \xB7 ${t("{n} tiles", { n: Math.round(w.travelled / 32) })}` : ""}`,
+        color: rgb(unitColor(w.unit)),
+        bad: w.outcome !== "arrived",
+        on: is("walk", i),
+        pick: { kind: "walk", id: i }
+      })), "", session.game.stale ? t("out of date") : void 0);
+    }
     list("chokes", t("Chokes"), chokes.length, chokes.map((c) => ({
       label: t("{width} tiles wide at {x}, {y}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y) }),
       hint: t("area {a} \u2194 {b}", { a: c.a + 1, b: c.b + 1 }),
@@ -1782,10 +2302,15 @@ function activate(api) {
   api.menu.add("Tools", { label: msg("Walkability\u2026"), enabled: () => api.document.isOpen(), command: "open" });
   api.contextMenu.add("viewport", { label: msg("Walkability overlay"), command: "toggle" });
   api.hotkeys.add("Ctrl+Shift+W", { command: "toggle" });
-  for (const event of ["terrain", "units", "doodads", "settings"]) api.events.on(event, () => session.schedule());
+  api.services.watch("scm-sim.engine", (service) => session.setService(service));
+  for (const event of ["terrain", "units", "doodads", "settings"]) api.events.on(event, () => {
+    session.schedule();
+    session.gameEdited();
+  });
   api.events.on("document", () => {
     if (!api.document.isOpen()) session.clear();
     else session.schedule();
+    if (session.game.doc !== null && session.game.doc !== api.document.id()) session.clearGame();
   });
   api.events.on("language", () => {
     const reopen = (handle, openIt) => {

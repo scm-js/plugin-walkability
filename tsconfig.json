@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["plugin.ts", "analysis.ts"]
+  "include": ["plugin.ts", "analysis.ts", "game.ts"]
 }

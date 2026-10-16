@@ -27,6 +27,11 @@ Buildings and resources count as walls (they block the game's pathing too), and 
 ask for the ground as a small, medium or large unit sees it, since a Siege Tank does not
 fit where a Zergling does.
 
+All of that is an estimate worked out from the minitiles. In the editor at scmjs.dev, the
+panel can also have **the game itself** walk the map (see below): the regions the game
+plans ground routes over, and real units walked between the start locations by the
+game's own pathfinding, with what went wrong on the way.
+
 ## Install
 
 In scmJS: **Plugins ▸ Manage Plugins…**, paste
@@ -76,16 +81,61 @@ Options:
 - **Buildings and resources block the way** treats every building and mineral field or
   geyser as a wall, as the game does. Untick it to see the terrain alone.
 
+## The game's own pathing
+
+Since 1.3.0. Only in the editor at scmjs.dev: it needs the
+[scm-sim](https://github.com/scm-js/plugin-scm-sim) plugin, version 0.7.0 or later, and
+the game engine served beside the editor. A copy of the game from StarEdit's download is
+enough. Elsewhere, for example in the desktop app, the section does not appear.
+
+**Walk the map**, in the panel's *The game's own pathing* section, starts the map in the
+game, out of sight, and walks the ticked units (Probe, Zergling, Dragoon, Siege Tank and
+Ultralisk to begin with) from each start location to every other one. Each start
+location walked from is a game of its own and takes a few seconds: a 4-player map takes
+about ten seconds, an 8-player map about forty. Nobody plays and the map is not changed.
+The game is started on a copy that has a neutral Nexus on every start location and none of
+the map's triggers.
+
+The overlay then shows *The game's regions and walks*:
+
+- **Regions**: one colour per region of the game's, darker at its edges. These are what
+  the game plans ground routes over. Pointing at the map names the region and its ground
+  group (ground of one group is joined).
+- **Walks**: each unit's route in its own colour. A walk that went wrong ends in a red
+  cross.
+
+*What the game found* lists:
+
+- A walk that **stops short**. The game can find no way all the way, or gives up
+  looking on a long route. On Bridge to Bridge '98, every unit sent between two of the
+  start locations stops about 150 tiles away.
+- A walk that **gets stuck**, or is **still walking** after seven minutes.
+- Two start locations the game finds **no ground between**, and whether Walkability's
+  estimate disagrees.
+- A route the game walks **much longer than the shortest ground route** (30 % and ten
+  tiles more).
+- A unit the game **could not place** near a start location (its spot was a cliff edge
+  or too tight for it), so it walked nothing from there.
+
+Click a row to go to it. *Both ways* walks each pair in both directions, since a route is
+not always the same backwards. **Walk between two points** asks for two clicks and walks
+the ticked units between them.
+
+The details panel lists every walk with its time at Fastest. *Copy report* includes them.
+An edit to the map marks the walks out of date; walk the map again to bring them up to date.
+
 ## Layout
 
 | | |
 | --- | --- |
 | `plugin.json` | the manifest the editor reads (name, version, `entry`, `icon`, the API version it needs) |
 | `plugin.ts` | `activate(api)`: building the grid from the open map, the overlay bitmaps, the overlay (`api.ui.overlay`) and the two panels |
+| `game.ts` | the game's own pathing: the walks matched against the estimate, the findings, the wording (pure, tested) |
+| `vendor/scm-sim.d.ts` | a copy of the scm-sim plugin's service types (`contract.d.ts` at v0.7.0) |
 | `analysis.ts` | the pure part: the minitile grid, clearance (an exact Euclidean distance transform), islands, the watershed into areas and chokes, seams, the start-to-start routes, the text report |
 | `i18n.ts`, `ko.ts` | the plugin's words in the editor's language: `t()` / `msg()` and the Korean catalogue |
 | `dist/plugin.js` | the bundle the editor loads; `npm run build` writes it, CI commits it |
-| `tests/` | vitest over `analysis.ts`, and a check that `ko.ts` has every string the plugin shows |
+| `tests/` | vitest over `analysis.ts` and `game.ts`, and a check that `ko.ts` has every string the plugin shows |
 
 Types come from [`@scm-js/plugin-api`](https://github.com/scm-js/plugin-api), a devDependency
 generated from the editor's own `src/plugins/api.ts`; `npm update @scm-js/plugin-api` takes the
