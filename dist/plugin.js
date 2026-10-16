@@ -790,6 +790,57 @@ function walkedFrom(result, bothWays) {
   const slots = result.starts.map((s) => s.owner);
   return bothWays ? slots : slots.slice(0, -1);
 }
+function chokeEnds(a, c, reach = 32) {
+  const px = (p) => ({ x: p.x * CELL_PX + CELL_PX / 2, y: p.y * CELL_PX + CELL_PX / 2 });
+  for (const r of [reach, reach * 0.75, reach * 0.5, reach * 0.35].map(Math.round)) {
+    let best = null, score = -1;
+    for (let k = 0; k < 32; k++) {
+      const dx = Math.cos(k * Math.PI / 16), dy = Math.sin(k * Math.PI / 16);
+      const end = (sign) => {
+        for (let step = 1; step <= r; step++) {
+          const x = Math.round(c.x + dx * step * sign), y = Math.round(c.y + dy * step * sign);
+          if (x < 0 || y < 0 || x >= a.w || y >= a.h || !a.open[y * a.w + x]) return null;
+        }
+        return { x: Math.round(c.x + dx * r * sign), y: Math.round(c.y + dy * r * sign) };
+      };
+      const p = end(1), q = end(-1);
+      if (!p || !q) continue;
+      const ap = a.area[p.y * a.w + p.x], aq = a.area[q.y * a.w + q.x];
+      const pair = ap === c.a && aq === c.b ? { from: p, to: q } : ap === c.b && aq === c.a ? { from: q, to: p } : null;
+      if (!pair) continue;
+      const room = a.alt[p.y * a.w + p.x] + a.alt[q.y * a.w + q.x];
+      if (room > score) {
+        score = room;
+        best = { from: px(pair.from), to: px(pair.to) };
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+var MOST = 10 / 12;
+function groupThrough(g) {
+  const count = g.made, need = Math.max(1, Math.ceil(count * MOST));
+  if (g.alone === null || g.times.length < need) return null;
+  const most = g.times[need - 1];
+  return { most, queue: Math.max(0, most - g.alone), stragglers: count - g.times.filter((f) => f <= 2 * most).length, count: need };
+}
+function queueFrames(g) {
+  return groupThrough(g)?.queue ?? null;
+}
+function miningGap(bases, least = 0.05) {
+  const starts = bases.filter((b) => b.id !== void 0 && b.rates.length);
+  let best = null;
+  const counts = [...new Set(starts.flatMap((b) => b.rates.map((r) => r.workers)))];
+  for (const workers of counts) {
+    const at = starts.map((b) => ({ id: b.id, rate: b.rates.find((r) => r.workers === workers)?.perMinute ?? 0 })).filter((x) => x.rate > 0);
+    if (at.length < 2) continue;
+    const fast = at.reduce((x, y) => y.rate > x.rate ? y : x), slow = at.reduce((x, y) => y.rate < x.rate ? y : x);
+    const share = (fast.rate - slow.rate) / fast.rate;
+    if (share >= least && (!best || share > best.share)) best = { slow: slow.id, fast: fast.id, workers, share };
+  }
+  return best;
+}
 
 // ko.ts
 var KO = {
@@ -957,7 +1008,34 @@ var KO = {
   "did not move": "\uC6C0\uC9C1\uC774\uC9C0 \uC54A\uC74C",
   "The game could not place a {unit} at the point picked": "\uAC8C\uC784\uC774 \uACE0\uB978 \uC9C0\uC810\uC5D0 {unit|\uC744} \uB193\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
   "The game could not place a {unit} near {from}'s start location, so it walked nothing from there": "\uAC8C\uC784\uC774 {from}\uC758 \uC2DC\uC791 \uC704\uCE58 \uADFC\uCC98\uC5D0 {unit|\uC744} \uB193\uC9C0 \uBABB\uD574 \uADF8\uACF3\uC5D0\uC11C\uB294 \uC544\uBB34\uAC83\uB3C4 \uAC77\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4",
-  "not placed": "\uB193\uC9C0 \uBABB\uD568"
+  "not placed": "\uB193\uC9C0 \uBABB\uD568",
+  "Walkability: the measuring was stopped": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uCE21\uC815\uC744 \uBA48\uCDC4\uC2B5\uB2C8\uB2E4",
+  "Walkability: no choke to measure": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uCE21\uC815\uD560 \uAE38\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4",
+  "Walkability: {n, plural, one {# choke} other {# chokes}} measured, the slowest queueing {s} s": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uAE38\uBAA9 {n}\uAC1C\uB97C \uCE21\uC815\uD588\uC2B5\uB2C8\uB2E4. \uAC00\uC7A5 \uC624\uB798 \uBC00\uB9B0 \uACF3\uC740 {s}\uCD08",
+  "Walkability: {n, plural, one {# base} other {# bases}} measured": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615: \uAE30\uC9C0 {n}\uAC1C\uB97C \uCE21\uC815\uD588\uC2B5\uB2C8\uB2E4",
+  "Click the middle of where the town hall would stand": "\uBCF8\uC9C4 \uAC74\uBB3C\uC774 \uC124 \uC790\uB9AC\uC758 \uAC00\uC6B4\uB370\uB97C \uD074\uB9AD\uD558\uC138\uC694",
+  "{player}'s start location": "{player}\uC758 \uC2DC\uC791 \uC704\uCE58",
+  "The base at {x}, {y}": "{x}, {y}\uC758 \uAE30\uC9C0",
+  "no town hall fits here": "\uBCF8\uC9C4 \uAC74\uBB3C\uC744 \uB193\uC744 \uC218 \uC5C6\uC74C",
+  "no mineral fields nearby": "\uAC00\uAE4C\uC6B4 \uBBF8\uB124\uB784 \uD544\uB4DC \uC5C6\uC74C",
+  "{slow}'s start location mines {pct} % less than {fast}'s with {n} workers": "\uC77C\uAFBC {n}\uAE30\uC77C \uB54C {slow}\uC758 \uC2DC\uC791 \uC704\uCE58\uAC00 {fast}\uC758 \uC2DC\uC791 \uC704\uCE58\uBCF4\uB2E4 {pct}% \uB35C \uCEA1\uB2C8\uB2E4",
+  "did not get through": "\uC9C0\uB098\uAC00\uC9C0 \uBABB\uD568",
+  "Mining per game minute (8, 16 and 24 workers)": "\uAC8C\uC784 \uC2DC\uAC04 1\uBD84\uB2F9 \uCC44\uCDE8\uB7C9 (\uC77C\uAFBC 8, 16, 24\uAE30)",
+  "/min": "/\uBD84",
+  "Measure": "\uCE21\uC815",
+  "Put a group of twelve through every choke listed, and one alone, and time them": "\uBAA9\uB85D\uC758 \uBAA8\uB4E0 \uAE38\uBAA9\uC5D0 12\uAE30 \uBB34\uB9AC\uC640 1\uAE30\uB97C \uAC01\uAC01 \uC9C0\uB098\uAC00\uAC8C \uD558\uACE0 \uC2DC\uAC04\uC744 \uC7BD\uB2C8\uB2E4",
+  "12 \xD7": "12 \xD7",
+  "Mining": "\uCC44\uCDE8",
+  "Mine at every start location with 8, 16 and 24 workers, and count the minerals per minute": "\uBAA8\uB4E0 \uC2DC\uC791 \uC704\uCE58\uC5D0\uC11C \uC77C\uAFBC 8, 16, 24\uAE30\uB85C \uCC44\uCDE8\uD558\uACE0 \uBD84\uB2F9 \uBBF8\uB124\uB784\uC744 \uC149\uB2C8\uB2E4",
+  "Add a base\u2026": "\uAE30\uC9C0 \uCD94\uAC00\u2026",
+  "Click where a town hall would stand, and measure the mining there too": "\uBCF8\uC9C4 \uAC74\uBB3C\uC774 \uC124 \uC790\uB9AC\uB97C \uD074\uB9AD\uD558\uBA74 \uADF8\uACF3\uC758 \uCC44\uCDE8\uB7C9\uB3C4 \uCE21\uC815\uD569\uB2C8\uB2E4",
+  "Measuring {done} of {total}\u2026": "{total}\uAC1C \uC911 {done}\uAC1C \uCE21\uC815 \uC911\u2026",
+  "+{q} s ({alone} s alone)": "+{q}\uCD08 (\uD63C\uC790 {alone}\uCD08)",
+  "Chokes, twelve {unit} at once": "\uAE38\uBAA9, {unit} 12\uAE30 \uB3D9\uC2DC \uD1B5\uACFC",
+  "Minerals per minute with 8, 16 and 24 workers": "\uC77C\uAFBC 8, 16, 24\uAE30\uC77C \uB54C \uBD84\uB2F9 \uBBF8\uB124\uB784",
+  ", {n, plural, one {# straggler} other {# stragglers}}": ", \uB4A4\uCC98\uC9C4 \uC720\uB2DB {n}\uAE30",
+  "{alone} s alone, {most} s for {n} of {count}: {q} s queueing": "\uD63C\uC790 {alone}\uCD08, {count}\uAE30 \uC911 {n}\uAE30 {most}\uCD08: {q}\uCD08 \uBC00\uB9BC",
+  "Chokes, a group of twelve {unit} against one alone, timed till ten of them are through": "\uAE38\uBAA9, {unit} 12\uAE30 \uBB34\uB9AC\uC640 1\uAE30 \uBE44\uAD50 (10\uAE30\uAC00 \uC9C0\uB0A0 \uB54C\uAE4C\uC9C0)"
 };
 
 // plugin.ts
@@ -1008,6 +1086,7 @@ var STYLE = `
 .wlk .wlk-keys kbd { font-family: inherit; color: var(--text-dim, #99a2b3); }
 .wlk .wlk-game { display: flex; flex-direction: column; gap: 6px; }
 .wlk .wlk-game:empty { display: none; }
+.wlk .wlk-dim { color: var(--text-dim, #99a2b3); }
 .wlk .wlk-h { font-weight: 600; color: var(--text, #e6e9ef); border-top: 1px solid var(--border, #333); padding-top: 7px; }
 `;
 var MODES = [
@@ -1024,13 +1103,14 @@ var UNIT_SIZES = [
   { radius: 2, label: msg("Medium units (Dragoon, Hydralisk)") },
   { radius: 3, label: msg("Large units (Siege Tank, Ultralisk)") }
 ];
-var DEFAULTS = { mode: "areas", chokes: true, seams: true, starts: true, labels: true, opacity: 0.45, unitRadius: 1, buildingsBlock: true, minArea: 24, minPocket: 2, maxChoke: 12, gameUnits: [...GAME_UNITS], gameBothWays: false };
+var DEFAULTS = { mode: "areas", chokes: true, seams: true, starts: true, labels: true, opacity: 0.45, unitRadius: 1, buildingsBlock: true, minArea: 24, minPocket: 2, maxChoke: 12, gameUnits: [...GAME_UNITS], gameBothWays: false, chokeUnit: 66 };
 function loadSettings(api) {
   const stored = api.storage.get("settings", {});
   const s = { ...DEFAULTS, ...stored };
   if (!MODES.some((m) => m.id === s.mode)) s.mode = DEFAULTS.mode;
   if (!Array.isArray(s.gameUnits)) s.gameUnits = [...DEFAULTS.gameUnits];
   s.gameUnits = s.gameUnits.filter((u) => GAME_UNITS.includes(u));
+  if (!GAME_UNITS.includes(s.chokeUnit)) s.chokeUnit = DEFAULTS.chokeUnit;
   return s;
 }
 function hsl(hue, s, l) {
@@ -1080,7 +1160,7 @@ var Session = class {
   timer = null;
   /** A run is under way: the panels show it (a ring in the status, the last results dimmed under a note). */
   running = false;
-  game = { service: null, usable: null, reason: null, result: null, doc: null, stale: false, findings: [], custom: [], unplaced: [], customUnplaced: [], running: null, error: null };
+  game = { service: null, usable: null, reason: null, result: null, doc: null, stale: false, findings: [], custom: [], canMeasure: null, chokes: null, mining: null, halls: [], unplaced: [], customUnplaced: [], running: null, error: null };
   /** The game's regions as a picture, a pixel a minitile. */
   regions = null;
   api;
@@ -1239,6 +1319,8 @@ var Session = class {
         return p.id < (this.game.result?.walks.length ?? 0);
       case "custom":
         return p.id < this.game.custom.length;
+      case "base":
+        return p.id < (this.game.mining?.length ?? 0);
     }
   }
   clear() {
@@ -1278,6 +1360,7 @@ var Session = class {
     }
     const status = await sim.status();
     this.game.usable = status.available && status.pathing !== null;
+    this.game.canMeasure = this.game.usable && typeof sim.measure === "function" && status.measure != null;
     this.game.reason = !status.available ? status.reason : status.pathing === null ? t("The engine's page cannot work out a map's pathing yet. Reload the editor and try again.") : null;
     this.notify();
   }
@@ -1363,9 +1446,100 @@ var Session = class {
   stopGame() {
     this.game.running?.stop.abort();
   }
+  /** A measure run: the engine asked through `ask`, with progress, a stop, and a word when it fails. */
+  async measureRun(what, ask) {
+    const sim = this.game.service;
+    if (!sim?.measure || this.game.running) return;
+    if (!this.api.document.isOpen()) {
+      this.api.ui.status(t("Walkability: open a map first"));
+      return;
+    }
+    const stop = new AbortController();
+    const running = { done: 0, total: 0, stop, what };
+    this.game.running = running;
+    this.game.error = null;
+    this.notify();
+    try {
+      await ask(sim, { signal: stop.signal, onProgress: (p) => {
+        running.done = p.done;
+        running.total = p.total;
+        this.notify();
+      } });
+      if (this.game.doc === null) this.game.doc = this.api.document.id();
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") this.api.ui.status(t("Walkability: the measuring was stopped"));
+      else this.game.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.game.running = null;
+      this.redraw();
+      this.notify();
+    }
+  }
+  /** Put a group of twelve through every choke listed (those up to the width set), each against one alone. */
+  async measureChokes() {
+    if (!this.analysis || this.stale) await this.run();
+    const a = this.analysis;
+    if (!a) return;
+    const unit = this.settings.chokeUnit;
+    const groups = this.chokes().flatMap((c) => {
+      const ends = chokeEnds(a, c);
+      return ends ? [{ id: c.id, unit, count: 12, ...ends }] : [];
+    });
+    if (!groups.length) {
+      this.api.ui.status(t("Walkability: no choke to measure"));
+      return;
+    }
+    await this.measureRun("chokes", async (sim, options) => {
+      const r = await sim.measure(void 0, { ...options, groups });
+      this.game.chokes = r.groups;
+      this.game.stale = false;
+      const worst = r.groups.map(queueFrames).filter((q) => q !== null).reduce((x, y) => Math.max(x, y), 0);
+      this.api.ui.status(t("Walkability: {n, plural, one {# choke} other {# chokes}} measured, the slowest queueing {s} s", { n: r.groups.length, s: seconds(worst) }));
+      if (!this.active) this.show();
+    });
+  }
+  /** Measure every start location's mining, and the halls added. */
+  async measureMining() {
+    await this.measureRun("mining", async (sim, options) => {
+      const r = await sim.measure(void 0, { ...options, starts: true, bases: this.game.halls.map((hall) => ({ hall })) });
+      this.game.mining = r.bases;
+      this.game.stale = false;
+      this.api.ui.status(t("Walkability: {n, plural, one {# base} other {# bases}} measured", { n: r.bases.length }));
+      if (!this.active) this.show();
+    });
+  }
+  /** Add a base by its hall's spot (one click: the hall's middle tile) and measure the mining again. */
+  async addBase() {
+    const tile = await this.api.ui.pickTile({ prompt: t("Click the middle of where the town hall would stand") });
+    if (!tile) return;
+    this.game.halls.push({ x: tile.x * 32 + 16, y: tile.y * 32 + 16 });
+    await this.measureMining();
+  }
+  /** How a group got through a choke, in words: short for a list's hint, long for the report. */
+  throughText(g, long = false) {
+    const r = groupThrough(g);
+    if (!r) return t("did not get through");
+    const stragglers = r.stragglers ? t(", {n, plural, one {# straggler} other {# stragglers}}", { n: r.stragglers }) : "";
+    return long ? t("{alone} s alone, {most} s for {n} of {count}: {q} s queueing", { alone: seconds(g.alone), most: seconds(r.most), n: r.count, count: g.made, q: seconds(r.queue) }) + stragglers : t("+{q} s ({alone} s alone)", { q: seconds(r.queue), alone: seconds(g.alone) }) + stragglers;
+  }
+  /** A base in words: the start location's player, or where its hall is. */
+  baseName(b) {
+    return b.id !== void 0 ? t("{player}'s start location", { player: playerName(b.id) }) : t("The base at {x}, {y}", { x: pxTiles(b.hall.x), y: pxTiles(b.hall.y) });
+  }
+  /** A base's rates in a line: `8: 512 · 16: 848 · 24: 1,112`. */
+  rateLine(b) {
+    if (!b.hallMade) return t("no town hall fits here");
+    if (!b.fields) return t("no mineral fields nearby");
+    return b.rates.map((r) => `${r.workers}: ${r.perMinute}`).join(" \xB7 ");
+  }
+  /** The widest mining gap between start locations, in words; null when they mine alike. */
+  miningGapText() {
+    const gap = this.game.mining ? miningGap(this.game.mining) : null;
+    return gap ? t("{slow}'s start location mines {pct} % less than {fast}'s with {n} workers", { slow: playerName(gap.slow), fast: playerName(gap.fast), pct: Math.round(gap.share * 100), n: gap.workers }) : null;
+  }
   /** The map was edited: the game's walks are of the map as it was. */
   gameEdited() {
-    if (!this.game.result && !this.game.custom.length) return;
+    if (!this.game.result && !this.game.custom.length && !this.game.chokes && !this.game.mining) return;
     if (!this.game.stale) {
       this.game.stale = true;
       this.notify();
@@ -1376,6 +1550,9 @@ var Session = class {
     this.game.running?.stop.abort();
     this.game.result = null;
     this.game.custom = [];
+    this.game.chokes = null;
+    this.game.mining = null;
+    this.game.halls = [];
     this.game.findings = [];
     this.game.unplaced = [];
     this.game.customUnplaced = [];
@@ -1383,7 +1560,7 @@ var Session = class {
     this.game.stale = false;
     this.game.error = null;
     this.regions = null;
-    if (this.pick?.kind === "walk" || this.pick?.kind === "custom") this.pick = null;
+    if (this.pick?.kind === "walk" || this.pick?.kind === "custom" || this.pick?.kind === "base") this.pick = null;
     if (this.settings.mode === "game") this.overlay = null;
     this.redraw();
     this.notify();
@@ -1415,7 +1592,7 @@ var Session = class {
   /** The game's walks as lines of text, for the report. */
   gameReport() {
     const g = this.game.result;
-    if (!g && !this.game.custom.length) return [];
+    if (!g && !this.game.custom.length && !this.game.chokes && !this.game.mining) return [];
     const lines = ["", t("The game's own pathing")];
     if (g) {
       if (g.regions) lines.push(`  ${t("{n, plural, one {# walkable region} other {# walkable regions}} of {all}", { n: g.regions.walkable.reduce((n, w) => n + w, 0), all: g.regions.count })}`);
@@ -1427,6 +1604,20 @@ var Session = class {
       }
     }
     for (const w of this.game.custom) lines.push(`  ${this.walkLabel(w)}: ${describeWalk(w)}`);
+    const a = this.analysis;
+    if (this.game.chokes?.length) {
+      lines.push("", t("Chokes, a group of twelve {unit} against one alone, timed till ten of them are through", { unit: this.unitName(this.game.chokes[0].unit) }));
+      for (const g2 of this.game.chokes) {
+        const c = a?.chokes[g2.id ?? -1];
+        lines.push(`  ${c ? t("{width} tiles wide at {x}, {y}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y) }) : "?"}: ${this.throughText(g2, true)}`);
+      }
+    }
+    if (this.game.mining?.length) {
+      lines.push("", t("Mining per game minute (8, 16 and 24 workers)"));
+      for (const b of this.game.mining) lines.push(`  ${this.baseName(b)}: ${this.rateLine(b)}`);
+      const gap = this.miningGapText();
+      if (gap) lines.push(`  ${gap}`);
+    }
     for (const u of this.game.customUnplaced) lines.push(`  ${t("The game could not place a {unit} at the point picked", { unit: this.unitName(u) })}`);
     if (this.game.stale) lines.push(`  (${t("the map was edited after the game walked it")})`);
     return lines;
@@ -1530,6 +1721,11 @@ var Session = class {
         const p = a.pairs[pick.id];
         if (p.chokeAt) centre(p.chokeAt.x, p.chokeAt.y);
         else this.api.view.goTo({ kind: "unit", index: a.starts[p.a].index });
+        break;
+      }
+      case "base": {
+        const b = this.game.mining?.[pick.id];
+        if (b) this.api.view.center(Math.floor(b.hall.x / 32), Math.floor(b.hall.y / 32));
         break;
       }
       case "walk":
@@ -1748,7 +1944,8 @@ var Session = class {
         ctx.beginPath();
         ctx.arc(cx(c.x), cy(c.y), r, 0, Math.PI * 2);
         ctx.stroke();
-        if (showLabels) label(`${tiles(c.width)}`, cx(c.x), cy(c.y) - r - 10, "#ffd166");
+        const measured = this.game.chokes?.find((g) => g.id === c.id), q = measured ? queueFrames(measured) : null;
+        if (showLabels) label(measured ? `${tiles(c.width)} \xB7 ${q === null ? "\u2715" : `+${seconds(q)} s`}` : `${tiles(c.width)}`, cx(c.x), cy(c.y) - r - 10, measured && (q === null || q > 72) ? "#ff8a7a" : "#ffd166");
       }
     }
     if (this.settings.seams) {
@@ -1810,6 +2007,12 @@ var Session = class {
       ctx.setLineDash([]);
     }
     this.drawWalks(ctx, view, showLabels, label);
+    if (showLabels) {
+      this.game.mining?.forEach((b, i) => {
+        const picked = this.pick?.kind === "base" && this.pick.id === i;
+        label(`${this.rateLine(b)}${b.hallMade && b.fields ? ` ${t("/min")}` : ""}`, view.x(b.hall.x), view.y(b.hall.y) + 1.5 * view.tilePx + 28, picked ? "#fff" : b.hallMade && b.fields ? "#9fe6a0" : "#ff8a7a");
+      });
+    }
     if (this.hover) {
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 1;
@@ -2009,7 +2212,7 @@ function mountPanel(session, body) {
   root.append(gameBox);
   const keys = t("The overlay stays on while you work on any layer and follows every edit; View \u25B8 Walkability, the Layers panel or {key} switch it off and on.").split("{key}");
   root.append(h("div", { className: "wlk-keys" }, keys[0], h("kbd", null, "Ctrl+Shift+W"), keys[1] ?? ""));
-  const openSections = /* @__PURE__ */ new Set(["problems", "game"]);
+  const openSections = /* @__PURE__ */ new Set(["problems", "game", "chokes-measured", "mining"]);
   let cover = null;
   if (session.game.service && session.game.usable === null) void session.checkGame();
   function renderGame() {
@@ -2045,8 +2248,28 @@ function mountPanel(session, body) {
     const walkBtn = W.button(t("Walk the map"), { primary: true, disabled: running !== null, onClick: () => void session.walkMap() });
     const pointsBtn = W.button(t("Walk between two points"), { ghost: true, disabled: running !== null, onClick: () => void session.walkPoints() });
     gameBox.append(h("div", { className: "wlk-top" }, walkBtn, pointsBtn, running ? W.button(t("Stop"), { ghost: true, onClick: () => session.stopGame() }) : null));
+    if (g.canMeasure) {
+      const unitSel = W.select(GAME_UNITS.map((u) => ({ value: u, label: session.unitName(u) })), { value: s.chokeUnit, onChange: (v) => {
+        s.chokeUnit = Number(v);
+        session.save();
+      } });
+      gameBox.append(h("div", { className: "wlk-row" }, h("label", null, t("Chokes")), h(
+        "div",
+        { className: "wlk-in" },
+        W.button(t("Measure"), { disabled: running !== null, title: t("Put a group of twelve through every choke listed, and one alone, and time them"), onClick: () => void session.measureChokes() }),
+        h("span", { className: "wlk-dim" }, t("12 \xD7")),
+        unitSel
+      )));
+      gameBox.append(h("div", { className: "wlk-row" }, h("label", null, t("Mining")), h(
+        "div",
+        { className: "wlk-in" },
+        W.button(t("Measure"), { disabled: running !== null, title: t("Mine at every start location with 8, 16 and 24 workers, and count the minerals per minute"), onClick: () => void session.measureMining() }),
+        W.button(t("Add a base\u2026"), { ghost: true, disabled: running !== null, title: t("Click where a town hall would stand, and measure the mining there too"), onClick: () => void session.addBase() })
+      )));
+    }
     if (running) {
-      gameBox.append(W.spinner({ size: "sm", label: running.total ? t("Walking {done} of {total}\u2026", { done: running.done, total: running.total }) : t("Starting the game\u2026") }));
+      const measuring = running.what === "chokes" || running.what === "mining";
+      gameBox.append(W.spinner({ size: "sm", label: !running.total ? t("Starting the game\u2026") : measuring ? t("Measuring {done} of {total}\u2026", { done: running.done, total: running.total }) : t("Walking {done} of {total}\u2026", { done: running.done, total: running.total }) }));
       return;
     }
     if (g.error) gameBox.append(h("div", { className: "wlk-status", style: "color:#ff9f7a" }, g.error));
@@ -2091,6 +2314,34 @@ function mountPanel(session, body) {
     });
     for (const u of g.customUnplaced) {
       gameBox.append(h("div", { className: "wlk-status", style: "color:#ff9f7a" }, t("The game could not place a {unit} at the point picked", { unit: session.unitName(u) })));
+    }
+    const a = session.analysis;
+    if (g.chokes?.length) {
+      const queue = (x) => queueFrames(x) ?? Infinity;
+      const rows = [...g.chokes].sort((x, y) => queue(y) - queue(x)).map((m) => {
+        const c = a?.chokes[m.id ?? -1], q = queueFrames(m);
+        return {
+          label: c ? t("{width} tiles wide at {x}, {y}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y) }) : "?",
+          hint: session.throughText(m),
+          bad: q === null || q > 72 || (groupThrough(m)?.stragglers ?? 0) > 1,
+          on: session.pick?.kind === "choke" && session.pick.id === m.id,
+          pick: m.id !== void 0 && c ? { kind: "choke", id: m.id } : null
+        };
+      });
+      gameBox.append(section(session, openSections, "chokes-measured", t("Chokes, twelve {unit} at once", { unit: session.unitName(g.chokes[0].unit) }), rows.length, rows, "", g.stale ? t("out of date") : void 0));
+    }
+    if (g.mining?.length) {
+      const rows = g.mining.map((b, i) => ({
+        label: session.baseName(b),
+        hint: session.rateLine(b),
+        bad: !b.hallMade || !b.fields,
+        color: b.id !== void 0 ? api.palette.playerColor(b.id) : void 0,
+        on: session.pick?.kind === "base" && session.pick.id === i,
+        pick: { kind: "base", id: i }
+      }));
+      const gap = session.miningGapText();
+      if (gap) rows.unshift({ label: gap, bad: true, pick: null });
+      gameBox.append(section(session, openSections, "mining", t("Minerals per minute with 8, 16 and 24 workers"), g.mining.length, rows, "", g.stale ? t("out of date") : void 0));
     }
   }
   function render() {

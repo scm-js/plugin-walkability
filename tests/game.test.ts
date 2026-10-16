@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Analysis } from "../analysis";
-import { describeWalk, estimatePair, findings, outcomes, seconds, unplaced, walkedFrom, walkFocus } from "../game";
-import type { PathingResult, PathingWalk } from "../vendor/scm-sim";
+import { chokeEnds, describeWalk, groupThrough, estimatePair, findings, miningGap, outcomes, queueFrames, seconds, unplaced, walkedFrom, walkFocus } from "../game";
+import type { MeasureBaseResult, MeasureGroupResult, PathingResult, PathingWalk } from "../vendor/scm-sim";
 
 /** A walk between two start locations (player slots), with the fields the findings read. */
 function walk(fromStart: number, toStart: number, outcome: PathingWalk["outcome"], travelled: number, more: Partial<PathingWalk> = {}): PathingWalk {
@@ -76,5 +76,58 @@ describe("what Walkability makes of the game's walks", () => {
     const r = { ...result([]), starts: [{ owner: 0, x: 0, y: 0 }, { owner: 3, x: 0, y: 0 }, { owner: 5, x: 0, y: 0 }] } as PathingResult;
     expect(walkedFrom(r, false)).toEqual([0, 3]);
     expect(walkedFrom(r, true)).toEqual([0, 3, 5]);
+  });
+});
+
+/** 80 × 40 cells: a wall down column 40 with a gap at rows 16 to 22; area 0 left of it, area 1 right. */
+function walled(): Analysis {
+  const w = 80, h = 40, n = w * h;
+  const open = new Uint8Array(n), area = new Int32Array(n), alt = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, wall = x === 40 && (y < 16 || y > 22);
+    open[i] = wall ? 0 : 1;
+    area[i] = wall ? -1 : x < 40 ? 0 : 1;
+    alt[i] = wall ? 0 : Math.min(Math.abs(x - 40) + (y >= 16 && y <= 22 ? 4 : 0), 10);
+  }
+  return { w, h, open, area, alt } as unknown as Analysis;
+}
+
+describe("the measures", () => {
+  it("finds a line through a choke from one of its areas to the other", () => {
+    const a = walled();
+    const ends = chokeEnds(a, { id: 0, x: 40, y: 19, clearance: 3, width: 7, a: 0, b: 1 });
+    expect(ends).not.toBeNull();
+    // From area 0 (the left) to area 1 (the right), 32 cells either side: map pixels.
+    expect(ends!.from.x).toBeLessThan(40 * 8 - 100);
+    expect(ends!.to.x).toBeGreaterThan(40 * 8 + 100);
+    // The other way round when the choke names the areas the other way.
+    const back = chokeEnds(a, { id: 0, x: 40, y: 19, clearance: 3, width: 7, a: 1, b: 0 })!;
+    expect(back.from.x).toBeGreaterThan(back.to.x);
+  });
+
+  it("finds nothing where no open line crosses", () => {
+    const a = walled();
+    for (let i = 0; i < a.open.length; i++) if (i % a.w > 41) a.open[i] = 0;
+    expect(chokeEnds(a, { id: 0, x: 40, y: 19, clearance: 3, width: 7, a: 0, b: 1 })).toBeNull();
+  });
+
+  it("measures the queue from most of the group against one alone, and counts the stragglers", () => {
+    const g = (alone: number | null, times: number[], made = 12) => ({ alone, times, made } as MeasureGroupResult);
+    // Ten of twelve through by 132; two much later.
+    const ten = [52, 55, 61, 71, 73, 79, 79, 84, 96, 132, 454, 517];
+    expect(groupThrough(g(52, ten))).toEqual({ most: 132, queue: 80, stragglers: 2, count: 10 });
+    expect(queueFrames(g(52, ten))).toBe(80);
+    // One that never got through is a straggler too.
+    expect(groupThrough(g(60, ten.slice(0, 11)))?.stragglers).toBe(2);
+    expect(queueFrames(g(140, [100, 110, 120, 130, 130, 130, 130, 130, 130, 130]))).toBe(0);
+    expect(queueFrames(g(null, ten))).toBeNull();
+    expect(queueFrames(g(52, ten.slice(0, 9)))).toBeNull();
+  });
+
+  it("finds the widest gap in mining between start locations", () => {
+    const base = (id: number | undefined, rates: number[]) => ({ id, rates: [8, 16, 24].map((workers, i) => ({ workers, mined: 0, perMinute: rates[i] })) } as MeasureBaseResult);
+    const bases = [base(0, [510, 850, 1110]), base(1, [540, 810, 1070]), base(3, [510, 780, 990]), base(undefined, [100, 100, 100])];
+    expect(miningGap(bases)).toEqual({ slow: 3, fast: 0, workers: 24, share: (1110 - 990) / 1110 });
+    expect(miningGap(bases, 0.2)).toBeNull();
   });
 });

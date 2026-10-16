@@ -84,7 +84,7 @@ Options:
 ## The game's own pathing
 
 Since 1.3.0. Only in the editor at scmjs.dev: it needs the
-[scm-sim](https://github.com/scm-js/plugin-scm-sim) plugin, version 0.7.0 or later, and
+[scm-sim](https://github.com/scm-js/plugin-scm-sim) plugin, version 0.7.0 or later (0.8.0 for the measures), and
 the game engine served beside the editor. A copy of the game from StarEdit's download is
 enough. Elsewhere, for example in the desktop app, the section does not appear.
 
@@ -124,14 +124,40 @@ the ticked units between them.
 The details panel lists every walk with its time at Fastest. *Copy report* includes them.
 An edit to the map marks the walks out of date; walk the map again to bring them up to date.
 
+### Chokes and mining
+
+Since 1.4.0, with scm-sim 0.8.0 or later, the same section can have the game measure two
+more things. Both are repeatable: measuring the same map twice gives the same numbers.
+
+**Chokes ▸ Measure** puts a group of twelve units (Dragoons to begin with; the list beside
+the button chooses) through every choke the panel lists, those up to *Chokes up to* wide.
+For each choke the group stands about eight tiles before it, in one of the two areas it
+joins. One of them walks to about eight tiles past it alone, then all twelve walk there
+together, and each is timed as it gets through the choke. A choke is judged by the time
+for ten of the twelve against the one alone: that is the time the group spends queueing.
+The few that go round or wait come through much later, and are counted as stragglers. On
+Lost Civilization, twelve Dragoons queue 5 to 17 seconds at the 2.5-tile passages and 2 to
+4 seconds at chokes 4 to 8 tiles wide. The list is sorted by queueing time, and the map
+shows it beside each choke's width, in red past three seconds.
+
+**Mining ▸ Measure** mines at every start location. Each gets a Nexus on its spot and
+Probes sent to its mineral fields, nearest first, as players split them: first 8, then
+16, then 24. After 25 seconds to settle, two game minutes are counted, and the result is
+minerals per minute at each count. *Add a base…* asks for one click on the middle of where
+a town hall would stand and measures that base too. The panel warns when one start
+location mines noticeably less than another (five per cent or more at some worker count):
+on Lost Civilization, Player 4's start mines 10 % less than Player 1's with 24 workers.
+Gas is not measured, since the game cannot be made to build an Assimilator for the
+purpose.
+
 ## Layout
 
 | | |
 | --- | --- |
 | `plugin.json` | the manifest the editor reads (name, version, `entry`, `icon`, the API version it needs) |
 | `plugin.ts` | `activate(api)`: building the grid from the open map, the overlay bitmaps, the overlay (`api.ui.overlay`) and the two panels |
-| `game.ts` | the game's own pathing: the walks matched against the estimate, the findings, the wording (pure, tested) |
-| `vendor/scm-sim.d.ts` | a copy of the scm-sim plugin's service types (`contract.d.ts` at v0.7.0) |
+| `game.ts` | the game's own pathing and measures: the walks matched against the estimate, the findings, a choke's two ends, a group's queueing and stragglers, the mining gap between starts (pure, tested) |
+| `vendor/scm-sim.d.ts` | a copy of the scm-sim plugin's service types (`contract.d.ts` at v0.8.0) |
 | `analysis.ts` | the pure part: the minitile grid, clearance (an exact Euclidean distance transform), islands, the watershed into areas and chokes, seams, the start-to-start routes, the text report |
 | `i18n.ts`, `ko.ts` | the plugin's words in the editor's language: `t()` / `msg()` and the Korean catalogue |
 | `dist/plugin.js` | the bundle the editor loads; `npm run build` writes it, CI commits it |
