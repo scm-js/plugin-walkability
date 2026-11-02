@@ -1,5 +1,5 @@
 /**
- * Walkability — a plugin for the scmJS map editor (https://github.com/jeany55/scm-js).
+ * Walkability — a plugin for the scmJS map editor (https://github.com/scm-js/scm-js).
  *
  * Tools ▸ Walkability… reads the VF4 minitile flags of every tile on the map through
  * `api.tileset.raw()`, marks the ground under buildings and resources, and works out
