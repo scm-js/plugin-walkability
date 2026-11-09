@@ -718,6 +718,22 @@ function report(a, names) {
 
 // game.ts
 var GAME_UNITS = [64, 37, 66, 5, 39];
+var GAME_DATA_SET = "starcraft";
+var DATASET_MEMBER = "scmjs\\dataset.json";
+function modDataSet(inUse, recorded) {
+  if (inUse && inUse.id !== GAME_DATA_SET) return inUse.name || inUse.id;
+  if (!recorded) return null;
+  try {
+    const raw = JSON.parse(new TextDecoder().decode(recorded));
+    if (!raw || typeof raw.id !== "string" || raw.id === GAME_DATA_SET) return null;
+    return typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : raw.id;
+  } catch {
+    return null;
+  }
+}
+function modNotice(set) {
+  return set ? t("These were worked out with the game's own units and data, not with {set}.", { set }) : null;
+}
 var FASTEST = 1e3 / 42;
 function seconds(frames) {
   return (frames / FASTEST).toFixed(1);
@@ -905,6 +921,7 @@ var KO = {
   "The map has no start locations.": "\uB9F5\uC5D0 \uC2DC\uC791 \uC704\uCE58\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.",
   "The overlay is off.": "\uC624\uBC84\uB808\uC774\uAC00 \uAEBC\uC838 \uC788\uC2B5\uB2C8\uB2E4.",
   "The overlay stays on while you work on any layer and follows every edit; View \u25B8 Walkability, the Layers panel or {key} switch it off and on.": "\uC624\uBC84\uB808\uC774\uB294 \uC5B4\uB290 \uB808\uC774\uC5B4\uC5D0\uC11C \uC791\uC5C5\uD558\uB4E0 \uCF1C\uC9C4 \uCC44\uB85C \uBAA8\uB4E0 \uD3B8\uC9D1\uC744 \uB530\uB77C\uAC11\uB2C8\uB2E4. \uBCF4\uAE30 \u25B8 \uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615, \uB808\uC774\uC5B4 \uD328\uB110, {key}\uB85C \uB044\uACE0 \uCF2D\uB2C8\uB2E4.",
+  "These were worked out with the game's own units and data, not with {set}.": "{set|\uC774} \uC544\uB2C8\uB77C \uAC8C\uC784 \uC790\uCCB4\uC758 \uC720\uB2DB\uACFC \uB370\uC774\uD130\uB85C \uACC4\uC0B0\uD55C \uACB0\uACFC\uC785\uB2C8\uB2E4.",
   "Unit size": "\uC720\uB2DB \uD06C\uAE30",
   "Walkability": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615",
   "Walkability details": "\uC774\uB3D9 \uAC00\uB2A5 \uC9C0\uD615 \uC790\uC138\uD788",
@@ -1368,6 +1385,26 @@ var Session = class {
   unitName(unit) {
     return this.api.palette.unitName(unit);
   }
+  /**
+   * The sentence the game's results carry when the map is a mod's (the data set in use, or
+   * the one the map records): the engine walks with the game's own data whatever the editor
+   * draws with (`modNotice`). Null for the game's own data.
+   */
+  modNotice() {
+    const { api } = this;
+    let inUse = null;
+    try {
+      inUse = api.gameData?.profile() ?? null;
+    } catch {
+    }
+    let recorded = null;
+    if (api.document.isOpen()) {
+      const extras = api.document.extras;
+      const name = extras?.list().find((n) => n.toLowerCase() === DATASET_MEMBER);
+      recorded = name ? extras.get(name) : null;
+    }
+    return modNotice(modDataSet(inUse, recorded));
+  }
   /** Where a walk went between, in words: the two start locations' players, or two tiles. */
   walkLabel(w) {
     const end = (slot, p) => slot !== void 0 ? playerName(slot) : t("{x}, {y}", { x: pxTiles(p.x), y: pxTiles(p.y) });
@@ -1594,6 +1631,8 @@ var Session = class {
     const g = this.game.result;
     if (!g && !this.game.custom.length && !this.game.chokes && !this.game.mining) return [];
     const lines = ["", t("The game's own pathing")];
+    const notice = this.modNotice();
+    if (notice) lines.push(`  ${notice}`);
     if (g) {
       if (g.regions) lines.push(`  ${t("{n, plural, one {# walkable region} other {# walkable regions}} of {all}", { n: g.regions.walkable.reduce((n, w) => n + w, 0), all: g.regions.count })}`);
       for (const w of g.walks) lines.push(`  ${this.walkLabel(w)}: ${describeWalk(w)}`);
@@ -2229,6 +2268,8 @@ function mountPanel(session, body) {
       return;
     }
     gameBox.append(h("div", { className: "wlk-status" }, t("The game itself walks units between the start locations, with its own regions and pathfinding. Each start location walked from takes a few seconds.")));
+    const notice = session.modNotice();
+    if (notice) gameBox.append(h("div", { className: "wlk-status", style: "color:#ffd166" }, notice));
     const ticks = h("div", { className: "wlk-ticks" });
     for (const unit of GAME_UNITS) {
       ticks.append(W.checkbox(session.unitName(unit), {
@@ -2472,14 +2513,15 @@ function mountDetails(session, body) {
     })), t("No areas."));
     const game = session.game.result;
     if (game?.walks.length) {
-      list("walks", t("The game's walks"), game.walks.length, game.walks.map((w, i) => ({
+      const notice = session.modNotice();
+      list("walks", t("The game's walks"), game.walks.length, [...notice ? [{ label: notice, pick: null }] : [], ...game.walks.map((w, i) => ({
         label: session.walkLabel(w),
         hint: `${describeWalk(w)}${w.outcome === "arrived" ? ` \xB7 ${t("{n} tiles", { n: Math.round(w.travelled / 32) })}` : ""}`,
         color: rgb(unitColor(w.unit)),
         bad: w.outcome !== "arrived",
         on: is("walk", i),
         pick: { kind: "walk", id: i }
-      })), "", session.game.stale ? t("out of date") : void 0);
+      }))], "", session.game.stale ? t("out of date") : void 0);
     }
     list("chokes", t("Chokes"), chokes.length, chokes.map((c) => ({
       label: t("{width} tiles wide at {x}, {y}", { width: tiles(c.width), x: tiles(c.x), y: tiles(c.y) }),
@@ -2563,6 +2605,7 @@ function activate(api) {
     else session.schedule();
     if (session.game.doc !== null && session.game.doc !== api.document.id()) session.clearGame();
   });
+  api.events.on("gameData", () => session.notify());
   api.events.on("language", () => {
     const reopen = (handle, openIt) => {
       if (handle?.isOpen()) {

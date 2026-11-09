@@ -29,7 +29,7 @@ import {
   analyse, blockBoxes, CELL_PX, CELLS_PER_TILE, Cell, componentsAround, gridFromTiles, pxTiles, report, tiles,
   type Analysis, type PixelBox, type StartInput,
 } from "./analysis";
-import { chokeEnds, describeWalk, findings, GAME_UNITS, groupThrough, miningGap, outcomes, queueFrames, seconds, unplaced, walkedFrom, walkFocus, type Finding } from "./game";
+import { chokeEnds, DATASET_MEMBER, describeWalk, findings, GAME_UNITS, groupThrough, miningGap, modDataSet, modNotice, outcomes, queueFrames, seconds, unplaced, walkedFrom, walkFocus, type Finding } from "./game";
 import { bindLanguage, msg, t, translate } from "./i18n";
 import { KO } from "./ko";
 import type { MeasureBaseResult, MeasureGroupResult, PathingResult, PathingWalk, ScmSimService } from "./vendor/scm-sim";
@@ -434,6 +434,24 @@ class Session {
   /** A unit's name as the editor gives it. */
   unitName(unit: number): string { return this.api.palette.unitName(unit); }
 
+  /**
+   * The sentence the game's results carry when the map is a mod's (the data set in use, or
+   * the one the map records): the engine walks with the game's own data whatever the editor
+   * draws with (`modNotice`). Null for the game's own data.
+   */
+  modNotice(): string | null {
+    const { api } = this;
+    let inUse: { id: string; name: string } | null = null;
+    try { inUse = api.gameData?.profile() ?? null; } catch { /* an editor without data sets */ }
+    let recorded: Uint8Array | null = null;
+    if (api.document.isOpen()) {
+      const extras = api.document.extras;
+      const name = extras?.list().find((n) => n.toLowerCase() === DATASET_MEMBER);
+      recorded = name ? extras.get(name) : null;
+    }
+    return modNotice(modDataSet(inUse, recorded));
+  }
+
   /** Where a walk went between, in words: the two start locations' players, or two tiles. */
   walkLabel(w: PathingWalk): string {
     const end = (slot: number | undefined, p: { x: number; y: number }) => (slot !== undefined ? playerName(slot) : t("{x}, {y}", { x: pxTiles(p.x), y: pxTiles(p.y) }));
@@ -644,6 +662,8 @@ class Session {
     const g = this.game.result;
     if (!g && !this.game.custom.length && !this.game.chokes && !this.game.mining) return [];
     const lines: string[] = ["", t("The game's own pathing")];
+    const notice = this.modNotice();
+    if (notice) lines.push(`  ${notice}`);
     if (g) {
       if (g.regions) lines.push(`  ${t("{n, plural, one {# walkable region} other {# walkable regions}} of {all}", { n: g.regions.walkable.reduce((n, w) => n + w, 0), all: g.regions.count })}`);
       for (const w of g.walks) lines.push(`  ${this.walkLabel(w)}: ${describeWalk(w)}`);
@@ -1209,6 +1229,8 @@ function mountPanel(session: Session, body: HTMLElement): () => void {
     if (g.usable === false) { gameBox.append(h("div", { className: "wlk-status" }, g.reason ?? t("The game's engine is not available here."))); return; }
     if (g.usable === null) { gameBox.append(W.spinner({ size: "sm", label: t("Asking the game's engine…") })); return; }
     gameBox.append(h("div", { className: "wlk-status" }, t("The game itself walks units between the start locations, with its own regions and pathfinding. Each start location walked from takes a few seconds.")));
+    const notice = session.modNotice();
+    if (notice) gameBox.append(h("div", { className: "wlk-status", style: "color:#ffd166" }, notice));
     const ticks = h("div", { className: "wlk-ticks" });
     for (const unit of GAME_UNITS) {
       ticks.append(W.checkbox(session.unitName(unit), {
@@ -1439,14 +1461,15 @@ function mountDetails(session: Session, body: HTMLElement): () => void {
 
     const game = session.game.result;
     if (game?.walks.length) {
-      list("walks", t("The game's walks"), game.walks.length, game.walks.map((w, i) => ({
+      const notice = session.modNotice();
+      list("walks", t("The game's walks"), game.walks.length, [...(notice ? [{ label: notice, pick: null }] : []), ...game.walks.map((w, i) => ({
         label: session.walkLabel(w),
         hint: `${describeWalk(w)}${w.outcome === "arrived" ? ` · ${t("{n} tiles", { n: Math.round(w.travelled / 32) })}` : ""}`,
         color: rgb(unitColor(w.unit)),
         bad: w.outcome !== "arrived",
         on: is("walk", i),
-        pick: { kind: "walk", id: i },
-      })), "", session.game.stale ? t("out of date") : undefined);
+        pick: { kind: "walk", id: i } as Pick,
+      }))], "", session.game.stale ? t("out of date") : undefined);
     }
 
     list("chokes", t("Chokes"), chokes.length, chokes.map((c) => ({
@@ -1529,6 +1552,8 @@ export default function activate(api: PluginApi) {
     // The game's walks belong to the map they were made on.
     if (session.game.doc !== null && session.game.doc !== api.document.id()) session.clearGame();
   });
+  // Another data set: whether the game's results carry the notice that they are the game's own.
+  api.events.on("gameData", () => session.notify());
   // A new language: the panels are built again in it, and the picture's labels follow on the next draw.
   api.events.on("language", () => {
     const reopen = (handle: PanelHandle | null, openIt: () => void) => { if (handle?.isOpen()) { handle.close(); openIt(); } };

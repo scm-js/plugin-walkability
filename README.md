@@ -92,6 +92,10 @@ the [scm-sim](https://github.com/scm-js/plugin-scm-sim) plugin (0.7.0 or later f
 0.8.0 or later for the measures), which comes with the editor. Elsewhere, for example in the
 desktop app, the panel does not show this section.
 
+The game walks with its own data. On a map made with a mod's data set (the one in use, or the
+one the map was saved with), it still walks StarCraft's own units over StarCraft's own
+terrain rules, and the section, the details panel and **Copy report** say so in one line.
+
 ### Walk the map
 
 **Walk the map**, in the panel's *The game's own pathing* section, starts the map in the
