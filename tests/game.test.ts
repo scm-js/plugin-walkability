@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Analysis } from "../analysis";
-import { chokeEnds, describeWalk, groupThrough, estimatePair, findings, miningGap, outcomes, queueFrames, seconds, unplaced, walkedFrom, walkFocus } from "../game";
+import { chokeEnds, describeWalk, groupThrough, estimatePair, findings, miningGap, modDataSet, modNotice, outcomes, queueFrames, seconds, unplaced, walkedFrom, walkFocus } from "../game";
 import type { MeasureBaseResult, MeasureGroupResult, PathingResult, PathingWalk } from "../vendor/scm-sim";
 
 /** A walk between two start locations (player slots), with the fields the findings read. */
@@ -129,5 +129,29 @@ describe("the measures", () => {
     const bases = [base(0, [510, 850, 1110]), base(1, [540, 810, 1070]), base(3, [510, 780, 990]), base(undefined, [100, 100, 100])];
     expect(miningGap(bases)).toEqual({ slow: 3, fast: 0, workers: 24, share: (1110 - 990) / 1110 });
     expect(miningGap(bases, 0.2)).toBeNull();
+  });
+});
+
+describe("the game's results on a mod's map", () => {
+  const member = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const game = { id: "starcraft", name: "StarCraft: Brood War" };
+  const cosmonarchy = { id: "cosmonarchy-bw", name: "Cosmonarchy BW" };
+
+  it("names the data set in use when it is not the game's own", () => {
+    expect(modDataSet(cosmonarchy, null)).toBe("Cosmonarchy BW");
+    expect(modDataSet(game, null)).toBeNull();
+    expect(modDataSet(null, null)).toBeNull();
+  });
+
+  it("names the set the map records when the game's own data is in use", () => {
+    expect(modDataSet(game, member({ id: "cosmonarchy-bw", name: "Cosmonarchy BW", hash: "ac3f86533e4b5a31" }))).toBe("Cosmonarchy BW");
+    expect(modDataSet(game, member({ id: "my-mod" }))).toBe("my-mod");
+    expect(modDataSet(game, member({ id: "starcraft", name: "StarCraft: Brood War" }))).toBeNull();
+    expect(modDataSet(game, new TextEncoder().encode("not json"))).toBeNull();
+  });
+
+  it("says in one sentence that the results are the game's own, and nothing for the game's own data", () => {
+    expect(modNotice("Cosmonarchy BW")).toBe("These were worked out with the game's own units and data, not with Cosmonarchy BW.");
+    expect(modNotice(null)).toBeNull();
   });
 });

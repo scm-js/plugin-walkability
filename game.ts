@@ -12,6 +12,39 @@ import { t } from "./i18n";
 /** The units the game can walk here (units.dat ids): Probe, Zergling, Dragoon, Siege Tank, Ultralisk. Their names come from the editor. */
 export const GAME_UNITS: readonly number[] = [64, 37, 66, 5, 39];
 
+/** The game's own data set's id, as `api.gameData.profile().id` gives it. */
+export const GAME_DATA_SET = "starcraft";
+/** The member a map saved under a mod's data set records it in: `{ id, name, hash }`. */
+export const DATASET_MEMBER = "scmjs\\dataset.json";
+
+/**
+ * The data set a map is being made with when it is not the game's own, by name: the one in
+ * use, or else the one the map records (a map made for a mod, opened without it). Null for
+ * the game's own.
+ */
+export function modDataSet(inUse: { id: string; name: string } | null, recorded: Uint8Array | null): string | null {
+  if (inUse && inUse.id !== GAME_DATA_SET) return inUse.name || inUse.id;
+  if (!recorded) return null;
+  try {
+    const raw = JSON.parse(new TextDecoder().decode(recorded)) as { id?: unknown; name?: unknown } | null;
+    if (!raw || typeof raw.id !== "string" || raw.id === GAME_DATA_SET) return null;
+    return typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : raw.id;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the game's own pathing says when the map is a mod's. scm-sim's `pathing` and `measure`
+ * take no data set: the engine walks StarCraft's own units (the `GAME_UNITS` ids, at the
+ * game's sizes and speeds) over the game's own tilesets, whatever set the editor draws with.
+ * Handing it the set is a design question the C7 audit left open (scm-sim's
+ * `docs/mods-plan.md`), so until then the results say what they were computed with.
+ */
+export function modNotice(set: string | null): string | null {
+  return set ? t("These were worked out with the game's own units and data, not with {set}.", { set }) : null;
+}
+
 /** Frames a second at Fastest, the speed games are played at (42 ms a frame). */
 export const FASTEST = 1000 / 42;
 

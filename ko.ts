@@ -62,6 +62,7 @@ export const KO: Record<string, string> = {
   "The map has no start locations.": "맵에 시작 위치가 없습니다.",
   "The overlay is off.": "오버레이가 꺼져 있습니다.",
   "The overlay stays on while you work on any layer and follows every edit; View ▸ Walkability, the Layers panel or {key} switch it off and on.": "오버레이는 어느 레이어에서 작업하든 켜진 채로 모든 편집을 따라갑니다. 보기 ▸ 이동 가능 지형, 레이어 패널, {key}로 끄고 켭니다.",
+  "These were worked out with the game's own units and data, not with {set}.": "{set|이} 아니라 게임 자체의 유닛과 데이터로 계산한 결과입니다.",
   "Unit size": "유닛 크기",
   "Walkability": "이동 가능 지형",
   "Walkability details": "이동 가능 지형 자세히",
